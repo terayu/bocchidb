@@ -1,0 +1,9 @@
+BocchiDB
+Copyright 2026 The BocchiDB Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+BocchiDB implements the Apache CouchDB replication protocol and is inspired by
+PouchDB. It does not include source code from Apache CouchDB or PouchDB.
+If code derived from those projects is added in the future, its attribution
+must be added to this file.

@@ -1,0 +1,15 @@
+{
+  "name": "bocchidb-interop",
+  "private": true,
+  "type": "module",
+  "description": "BocchiDB の互換性テスト用ツール（PouchDB を基準実装として使用）",
+  "scripts": {
+    "check": "node check-conflict.mjs"
+  },
+  "dependencies": {
+    "pouchdb-adapter-http": "9.0.0",
+    "pouchdb-adapter-memory": "9.0.0",
+    "pouchdb-core": "9.0.0",
+    "pouchdb-replication": "9.0.0"
+  }
+}
