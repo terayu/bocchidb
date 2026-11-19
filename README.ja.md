@@ -33,14 +33,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.1.0` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.2` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", from: "0.1.0"),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.2")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),

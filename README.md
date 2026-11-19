@@ -33,14 +33,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.1.0`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.2`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", from: "0.1.0"),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.2")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
