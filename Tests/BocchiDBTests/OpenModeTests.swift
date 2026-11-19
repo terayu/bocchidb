@@ -14,6 +14,9 @@ import Testing
     }
 
     private func cleanUp() {
+        // 権限を変えたテストのあとでも消せるように戻す。
+        chmod(directory.path, 0o755)
+        for suffix in ["", "-wal", "-shm"] { chmod(url.path + suffix, 0o644) }
         try? FileManager.default.removeItem(at: directory)
     }
 
@@ -157,6 +160,64 @@ import Testing
         #expect(throws: BocchiDBError.unsupportedDatabase("unsupported schema version 999")) {
             try BocchiDB(url: url, mode: mode)
         }
+    }
+
+    @Test(arguments: [OpenMode.create, .readWrite, .readOnly])
+    func rejectsNonSQLiteFile(mode: OpenMode) throws {
+        defer { cleanUp() }
+        try Data(repeating: 0x41, count: 4096).write(to: url)
+
+        #expect(throws: BocchiDBError.unsupportedDatabase("not an SQLite database")) {
+            try BocchiDB(url: url, mode: mode)
+        }
+    }
+
+    // MARK: - 権限
+
+    @Test func readOnlyNeedsWritableFolderToCreateSHM() async throws {
+        defer { cleanUp() }
+        try await makeDatabase()
+        try FileManager.default.removeItem(atPath: url.path + "-shm")
+        chmod(directory.path, 0o555)
+
+        #expect(throws: BocchiDBError.permissionDenied) { try BocchiDB(url: url, mode: .readOnly) }
+    }
+
+    @Test func readOnlyOpensInReadOnlyFolderWhenSidecarFilesExist() async throws {
+        defer { cleanUp() }
+        try await makeDatabase()
+        chmod(directory.path, 0o555)
+
+        let db = try BocchiDB(url: url, mode: .readOnly)
+        #expect(try await db.allDocs().map(\.id) == ["a"])
+    }
+
+    @Test(arguments: [OpenMode.create, .readWrite, .readOnly])
+    func rejectsUnreadableFile(mode: OpenMode) async throws {
+        defer { cleanUp() }
+        try await makeDatabase()
+        chmod(url.path, 0o000)
+
+        #expect(throws: BocchiDBError.permissionDenied) { try BocchiDB(url: url, mode: mode) }
+    }
+
+    @Test(arguments: [OpenMode.create, .readWrite])
+    func writableModesRejectReadOnlyFile(mode: OpenMode) async throws {
+        defer { cleanUp() }
+        try await makeDatabase()
+        chmod(url.path, 0o444)
+
+        #expect(throws: BocchiDBError.permissionDenied) { try BocchiDB(url: url, mode: mode) }
+        // 読み取り専用モードなら開ける。
+        #expect(try BocchiDB(url: url, mode: .readOnly).mode == .readOnly)
+    }
+
+    @Test func createRejectsReadOnlyFolder() throws {
+        defer { cleanUp() }
+        chmod(directory.path, 0o555)
+
+        #expect(throws: BocchiDBError.permissionDenied) { try BocchiDB(url: url, mode: .create) }
+        #expect(!fileExists())
     }
 
     private func executeRaw(_ sql: String) throws {

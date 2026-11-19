@@ -11,6 +11,8 @@ public enum OpenMode: Sendable, Equatable {
     /// - `observeChanges()` は自分の書き込みだけを通知するため、このモードでは何も流れない。
     /// - ファイルがなければ `BocchiDBError.fileNotFound`。
     /// - `-wal` ファイルが隣にないと開けない（`BocchiDBError.walFileMissing`）。`-shm` ファイルはなければ作られるため、
-    ///   同じフォルダへの書き込み権限が必要になる。
+    ///   そのときは同じフォルダへの書き込み権限が必要になる（なければ `BocchiDBError.permissionDenied`）。
+    /// - 正常に閉じた DB なら、`-wal` がなくてもデータはすべて本体に入っている。ただし書き込み中に本体だけを
+    ///   コピーしたファイルは、最近の変更が欠けている（スキーマごと欠けて `unsupportedDatabase` になることもある）。
     case readOnly
 }

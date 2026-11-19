@@ -24,17 +24,14 @@ public actor BocchiDB {
     init(path: String, mode: OpenMode = .create, revsLimit: Int = 1000) throws {
         precondition(revsLimit >= 1, "revsLimit must be at least 1")
         if mode != .create, !FileManager.default.fileExists(atPath: path) { throw BocchiDBError.fileNotFound }
-        let connection = try SQLiteConnection(path: path, mode: mode)
-        if mode != .create {
-            do {
-                try Self.checkSchemaVersion(connection)
-            } catch let error as SQLiteError
-                where mode == .readOnly && error.code == SQLITE_CANTOPEN
-                && !FileManager.default.fileExists(atPath: path + "-wal") {
-                throw BocchiDBError.walFileMissing
-            }
+        let connection: SQLiteConnection
+        do {
+            connection = try SQLiteConnection(path: path, mode: mode)
+            if mode != .create { try Self.checkSchemaVersion(connection) }
+            if mode != .readOnly { try connection.execute(Self.schema) }
+        } catch let error as SQLiteError {
+            throw Self.openError(from: error, path: path, mode: mode)
         }
-        if mode != .readOnly { try connection.execute(Self.schema) }
         self.connection = connection
         self.mode = mode
         self.revsLimit = revsLimit
@@ -571,6 +568,32 @@ public actor BocchiDB {
     }
 
     private static let schemaVersion = "1"
+
+    /// 開くときの SQLite のエラーを、原因が分かるものは `BocchiDBError` に変換する。
+    ///
+    /// SQLite は権限の問題を専用のコードで返さない（`SQLITE_CANTOPEN` や `SQLITE_READONLY` になる）ため、
+    /// ファイルとフォルダの状態を調べて、権限が原因と確認できた場合だけ `permissionDenied` にする。
+    private static func openError(from error: SQLiteError, path: String, mode: OpenMode) -> any Error {
+        let fileManager = FileManager.default
+        switch error.code {
+        case SQLITE_NOTADB:
+            return BocchiDBError.unsupportedDatabase("not an SQLite database")
+        case SQLITE_CANTOPEN where mode == .readOnly && !fileManager.fileExists(atPath: path + "-wal"):
+            return BocchiDBError.walFileMissing
+        case SQLITE_CANTOPEN, SQLITE_READONLY, SQLITE_PERM:
+            let directory = (path as NSString).deletingLastPathComponent
+            let exists = fileManager.fileExists(atPath: path)
+            // 開くときに作る必要があるファイル。読み取り専用の接続は -shm だけを作る。
+            let filesToCreate = (exists ? [] : [path]) + (mode == .readOnly ? ["-shm"] : ["-wal", "-shm"])
+                .map { path + $0 }.filter { !fileManager.fileExists(atPath: $0) }
+            let denied = (exists && !fileManager.isReadableFile(atPath: path))
+                || (exists && mode != .readOnly && !fileManager.isWritableFile(atPath: path))
+                || (!filesToCreate.isEmpty && !fileManager.isWritableFile(atPath: directory))
+            return denied ? BocchiDBError.permissionDenied : error
+        default:
+            return error
+        }
+    }
 
     /// 既存のファイルが、このバージョンで扱える BocchiDB のデータベースか確かめる。
     private static func checkSchemaVersion(_ connection: SQLiteConnection) throws {

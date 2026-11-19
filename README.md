@@ -33,14 +33,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.2`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.3`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.2")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.3")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -75,10 +75,13 @@ let db = try BocchiDB(url: url, mode: .readWrite)    // open an existing BocchiD
 let db = try BocchiDB(url: url, mode: .readOnly)     // read-only; writes and sync throw BocchiDBError.readOnly
 ```
 
-`.readWrite` and `.readOnly` throw `BocchiDBError.fileNotFound` if the file does not exist, and
-`BocchiDBError.unsupportedDatabase` for non-BocchiDB files or unsupported schema versions. `.readOnly` can safely
-read a file another app is writing to. It needs the `-wal` file next to the database (otherwise it throws
-`BocchiDBError.walFileMissing`), and write access to the folder to create the `-shm` file.
+`.readWrite` and `.readOnly` throw `BocchiDBError.fileNotFound` if the file does not exist. In every mode,
+non-BocchiDB files and unsupported schema versions throw `BocchiDBError.unsupportedDatabase`, and missing
+access to the file or folder throws `BocchiDBError.permissionDenied`.
+
+`.readOnly` can safely read a file another app is writing to. It needs the `-wal` file next to the database
+(otherwise it throws `BocchiDBError.walFileMissing`), and creates the `-shm` file if missing, which then
+requires write access to the folder.
 
 ### Sync with CouchDB
 

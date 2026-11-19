@@ -33,14 +33,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.2` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.3` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.2")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.3")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -75,10 +75,12 @@ let db = try BocchiDB(url: url, mode: .readWrite)    // 既存の BocchiDB フ�
 let db = try BocchiDB(url: url, mode: .readOnly)     // 読み取り専用。書き込みと同期は BocchiDBError.readOnly
 ```
 
-`.readWrite` と `.readOnly` は、ファイルがなければ `BocchiDBError.fileNotFound`、BocchiDB 以外のファイルや対応していない
-スキーマのバージョンでは `BocchiDBError.unsupportedDatabase` になります。`.readOnly` は、他のアプリが書き込み中の
-ファイルも安全に読めます。ただし隣に `-wal` ファイルが必要で（なければ `BocchiDBError.walFileMissing`）、
-`-shm` ファイルを作るためにフォルダへの書き込み権限が要ります。
+`.readWrite` と `.readOnly` は、ファイルがなければ `BocchiDBError.fileNotFound` になります。どのモードでも、
+BocchiDB 以外のファイルや対応していないスキーマのバージョンでは `BocchiDBError.unsupportedDatabase`、
+ファイルやフォルダへのアクセス権が足りなければ `BocchiDBError.permissionDenied` になります。
+
+`.readOnly` は、他のアプリが書き込み中のファイルも安全に読めます。ただし隣に `-wal` ファイルが必要で
+（なければ `BocchiDBError.walFileMissing`）、`-shm` ファイルがなければ作るため、そのときはフォルダへの書き込み権限が要ります。
 
 ### CouchDB との同期
 

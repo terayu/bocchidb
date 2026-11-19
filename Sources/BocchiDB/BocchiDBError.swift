@@ -14,10 +14,12 @@ public enum BocchiDBError: Error, Equatable, Sendable {
     case invalidAttachment(String)
     /// 読み取り専用（`OpenMode.readOnly`）で開いた DB に書き込もうとした。
     case readOnly
-    /// 開いたファイルが BocchiDB のデータベースではない、または対応していないスキーマのバージョン。
+    /// 開いたファイルが SQLite や BocchiDB のデータベースではない、または対応していないスキーマのバージョン。
     case unsupportedDatabase(String)
     /// `.readWrite` または `.readOnly` で開こうとしたファイルが存在しない。
     case fileNotFound
     /// `.readOnly` で開こうとしたが、隣に `-wal` ファイルがない（読み取り専用の接続では作れない）。
     case walFileMissing
+    /// ファイルを読めない、書き込みモードでファイルに書けない、または `-wal` や `-shm` を作る必要があるのにフォルダに書き込めない。
+    case permissionDenied
 }
