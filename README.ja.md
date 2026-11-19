@@ -65,6 +65,21 @@ try await db.remove(id: "inspection-001", rev: rev2)
 文書を更新・削除するには、現在の `rev` を渡します。古い `rev` で書き込むと、CouchDB と同じく
 `BocchiDBError.conflict` になります。
 
+### ファイルの開き方
+
+`mode` で開き方を選べます。
+
+```swift
+let db = try BocchiDB(url: url)                      // .create: なければ作成（既定）
+let db = try BocchiDB(url: url, mode: .readWrite)    // 既存の BocchiDB ファイルだけを開く
+let db = try BocchiDB(url: url, mode: .readOnly)     // 読み取り専用。書き込みと同期は BocchiDBError.readOnly
+```
+
+`.readWrite` と `.readOnly` は、ファイルがなければ `BocchiDBError.fileNotFound`、BocchiDB 以外のファイルや対応していない
+スキーマのバージョンでは `BocchiDBError.unsupportedDatabase` になります。`.readOnly` は、他のアプリが書き込み中の
+ファイルも安全に読めます。ただし隣に `-wal` ファイルが必要で（なければ `BocchiDBError.walFileMissing`）、
+`-shm` ファイルを作るためにフォルダへの書き込み権限が要ります。
+
 ### CouchDB との同期
 
 ```swift

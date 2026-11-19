@@ -1,25 +1,43 @@
 import CryptoKit
 import Foundation
+import SQLite3
 
 /// CouchDB と同期できるローカル文書データベース。
 public actor BocchiDB {
+    /// ファイルを開いた方法。
+    public nonisolated let mode: OpenMode
     private let connection: SQLiteConnection
     private let revsLimit: Int
     private var observers: [UUID: AsyncStream<Change>.Continuation] = [:]
     /// 購読者に通知し終えた seq。
     private var notifiedSeq: Int64 = 0
 
-    /// `url` の SQLite ファイルを開く（なければ作成する）。
-    public init(url: URL, revsLimit: Int = 1000) throws {
-        try self.init(path: url.path, revsLimit: revsLimit)
+    /// `url` の SQLite ファイルを開く。
+    ///
+    /// - Parameter mode: 開き方。既定の `.create` は、ファイルがなければ作成する。
+    ///   `.readWrite` と `.readOnly` は既存の BocchiDB ファイルだけを開き、そうでなければエラーになる。
+    public init(url: URL, mode: OpenMode = .create, revsLimit: Int = 1000) throws {
+        try self.init(path: url.path, mode: mode, revsLimit: revsLimit)
     }
 
     /// `path` に ":memory:" を渡すとインメモリ DB になる。
-    init(path: String, revsLimit: Int = 1000) throws {
+    init(path: String, mode: OpenMode = .create, revsLimit: Int = 1000) throws {
         precondition(revsLimit >= 1, "revsLimit must be at least 1")
-        connection = try SQLiteConnection(path: path)
+        if mode != .create, !FileManager.default.fileExists(atPath: path) { throw BocchiDBError.fileNotFound }
+        let connection = try SQLiteConnection(path: path, mode: mode)
+        if mode != .create {
+            do {
+                try Self.checkSchemaVersion(connection)
+            } catch let error as SQLiteError
+                where mode == .readOnly && error.code == SQLITE_CANTOPEN
+                && !FileManager.default.fileExists(atPath: path + "-wal") {
+                throw BocchiDBError.walFileMissing
+            }
+        }
+        if mode != .readOnly { try connection.execute(Self.schema) }
+        self.connection = connection
+        self.mode = mode
         self.revsLimit = revsLimit
-        try connection.execute(Self.schema)
     }
 
     // MARK: - 公開 API
@@ -30,6 +48,7 @@ public actor BocchiDB {
     /// 削除済みの文書は `rev` なしで作り直せる。
     @discardableResult
     public func put(id: String, body: [String: JSONValue], rev: RevisionID? = nil) throws -> RevisionID {
+        try ensureWritable()
         let newRev = try connection.transaction {
             try writeDocument(DocumentWrite(id: id, rev: rev, body: body))
         }
@@ -40,6 +59,7 @@ public actor BocchiDB {
     /// 文書を削除し、削除 Revision の rev を返す。
     @discardableResult
     public func remove(id: String, rev: RevisionID) throws -> RevisionID {
+        try ensureWritable()
         let newRev = try connection.transaction {
             try writeDocument(DocumentWrite(id: id, rev: rev, deleted: true))
         }
@@ -51,6 +71,7 @@ public actor BocchiDB {
     ///
     /// 競合や検証エラーになった文書だけが失敗し、ほかの文書は保存される。
     public func bulkDocs(_ writes: [DocumentWrite]) throws -> [Result<RevisionID, BocchiDBError>] {
+        try ensureWritable()
         let results = try connection.transaction {
             try writes.map { write -> Result<RevisionID, BocchiDBError> in
                 do {
@@ -141,6 +162,7 @@ public actor BocchiDB {
     public func putAttachment(
         id: String, name: String, contentType: String, data: Data, rev: RevisionID? = nil
     ) throws -> RevisionID {
+        try ensureWritable()
         let newRev = try connection.transaction {
             let body = try rev.flatMap { try get(id: id, rev: $0)?.body } ?? [:]
             return try writeDocument(DocumentWrite(id: id, rev: rev, body: body),
@@ -153,6 +175,7 @@ public actor BocchiDB {
     /// 添付ファイルを削除し、新しい rev を返す。
     @discardableResult
     public func removeAttachment(id: String, name: String, rev: RevisionID) throws -> RevisionID {
+        try ensureWritable()
         let newRev = try connection.transaction {
             let body = try get(id: id, rev: rev)?.body ?? [:]
             return try writeDocument(DocumentWrite(id: id, rev: rev, body: body), edit: .remove(name: name))
@@ -233,6 +256,7 @@ public actor BocchiDB {
         id: String, path: [RevisionID], deleted: Bool, body: [String: JSONValue],
         attachments incoming: [String: IncomingAttachment] = [:]
     ) throws -> Bool {
+        try ensureWritable()
         try Self.validate(id: id, body: body)
         let changed = try connection.transaction {
             var (docPK, tree) = try loadTree(id: id)
@@ -318,6 +342,7 @@ public actor BocchiDB {
 
     /// `_local` 文書を作成または上書きする。rev は CouchDB と同じ "0-N" 形式で増やす。
     func putLocal(id: String, body: [String: JSONValue]) throws {
+        try ensureWritable()
         try connection.run("""
             INSERT INTO local_docs (doc_id, rev, body) VALUES (?, '0-1', ?)
             ON CONFLICT (doc_id) DO UPDATE
@@ -326,6 +351,7 @@ public actor BocchiDB {
     }
 
     func removeLocal(id: String) throws {
+        try ensureWritable()
         try connection.run("DELETE FROM local_docs WHERE doc_id = ?", [.text(id)])
     }
 
@@ -338,6 +364,10 @@ public actor BocchiDB {
     }
 
     // MARK: - 書き込み
+
+    private func ensureWritable() throws {
+        if mode == .readOnly { throw BocchiDBError.readOnly }
+    }
 
     /// 書き込み時の添付の扱い。指定がなければ親 Revision の添付を引き継ぐ。
     private enum AttachmentEdit {
@@ -540,6 +570,20 @@ public actor BocchiDB {
                         attachments: try loadAttachments(docPK: docPK, rev: rev))
     }
 
+    private static let schemaVersion = "1"
+
+    /// 既存のファイルが、このバージョンで扱える BocchiDB のデータベースか確かめる。
+    private static func checkSchemaVersion(_ connection: SQLiteConnection) throws {
+        let hasMetadata = !(try connection.query(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").isEmpty)
+        guard hasMetadata,
+              let version = try connection.scalarText("SELECT value FROM metadata WHERE key = 'schema_version'")
+        else { throw BocchiDBError.unsupportedDatabase("not a BocchiDB database") }
+        guard version == schemaVersion else {
+            throw BocchiDBError.unsupportedDatabase("unsupported schema version \(version)")
+        }
+    }
+
     private static let schema = """
         PRAGMA journal_mode = WAL;
 
@@ -593,7 +637,7 @@ public actor BocchiDB {
           value TEXT NOT NULL
         );
 
-        INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '1');
+        INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '\(schemaVersion)');
         INSERT OR IGNORE INTO metadata (key, value) VALUES ('db_uuid', lower(hex(randomblob(16))));
         """
 }

@@ -12,4 +12,12 @@ public enum BocchiDBError: Error, Equatable, Sendable {
     case attachmentNotFound(String)
     /// 添付ファイルが不正（名前が空または `_` 始まり、または同期で受け取った stub に対応するデータがない）。
     case invalidAttachment(String)
+    /// 読み取り専用（`OpenMode.readOnly`）で開いた DB に書き込もうとした。
+    case readOnly
+    /// 開いたファイルが BocchiDB のデータベースではない、または対応していないスキーマのバージョン。
+    case unsupportedDatabase(String)
+    /// `.readWrite` または `.readOnly` で開こうとしたファイルが存在しない。
+    case fileNotFound
+    /// `.readOnly` で開こうとしたが、隣に `-wal` ファイルがない（読み取り専用の接続では作れない）。
+    case walFileMissing
 }

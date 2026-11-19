@@ -32,6 +32,7 @@ public struct Replicator: Sendable {
     /// CouchDB → ローカル。
     @discardableResult
     public func pull() async throws -> ReplicationResult {
+        try ensureWritable()
         var checkpoint = try await loadCheckpoint(direction: "pull")
         var since = checkpoint.since ?? .int(0)
         return ReplicationResult(docsWritten: try await pullBatches(&checkpoint, since: &since, longpoll: false) {})
@@ -40,6 +41,7 @@ public struct Replicator: Sendable {
     /// ローカル → CouchDB。
     @discardableResult
     public func push() async throws -> ReplicationResult {
+        try ensureWritable()
         var checkpoint = try await loadCheckpoint(direction: "push")
         var since: Int64 = if case .int(let seq) = checkpoint.since { seq } else { 0 }
         return ReplicationResult(docsWritten: try await pushBatches(&checkpoint, since: &since) {})
@@ -73,6 +75,7 @@ public struct Replicator: Sendable {
     /// for await status in statuses { model.status = status }  // MainActor 上で
     /// ```
     public func live(onStatus: @escaping @Sendable (SyncStatus) -> Void = { _ in }) async throws {
+        try ensureWritable()
         let status = StatusTracker(handler: onStatus)
         await status.start()
         // 最初の push より前に購読し、その間のローカル変更を取りこぼさない。
@@ -92,6 +95,11 @@ public struct Replicator: Sendable {
             await status.stop()
             throw error
         }
+    }
+
+    /// 読み取り専用の DB とは同期できない（pull は文書を、push もチェックポイントをローカルに書き込む）。
+    private func ensureWritable() throws {
+        if local.mode == .readOnly { throw BocchiDBError.readOnly }
     }
 
     // MARK: - Live Sync

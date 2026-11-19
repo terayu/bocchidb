@@ -18,9 +18,14 @@ final class SQLiteConnection {
     private let handle: OpaquePointer
 
     /// `path` に ":memory:" を渡すとインメモリ DB を開く。
-    init(path: String) throws {
+    init(path: String, mode: OpenMode = .create) throws {
         var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let access = switch mode {
+        case .create: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+        case .readWrite: SQLITE_OPEN_READWRITE
+        case .readOnly: SQLITE_OPEN_READONLY
+        }
+        let flags = access | SQLITE_OPEN_FULLMUTEX
         let rc = sqlite3_open_v2(path, &db, flags, nil)
         guard rc == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? "out of memory"

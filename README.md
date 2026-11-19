@@ -65,6 +65,21 @@ try await db.remove(id: "inspection-001", rev: rev2)
 Updating or deleting a document requires its current `rev`. Writing with an outdated `rev`
 throws `BocchiDBError.conflict`, as in CouchDB.
 
+### Open modes
+
+Choose how to open the file with `mode`.
+
+```swift
+let db = try BocchiDB(url: url)                      // .create: create the file if missing (default)
+let db = try BocchiDB(url: url, mode: .readWrite)    // open an existing BocchiDB file only
+let db = try BocchiDB(url: url, mode: .readOnly)     // read-only; writes and sync throw BocchiDBError.readOnly
+```
+
+`.readWrite` and `.readOnly` throw `BocchiDBError.fileNotFound` if the file does not exist, and
+`BocchiDBError.unsupportedDatabase` for non-BocchiDB files or unsupported schema versions. `.readOnly` can safely
+read a file another app is writing to. It needs the `-wal` file next to the database (otherwise it throws
+`BocchiDBError.walFileMissing`), and write access to the folder to create the `-shm` file.
+
 ### Sync with CouchDB
 
 ```swift
