@@ -6,11 +6,13 @@ import SQLite3
 public actor BocchiDB {
     /// ファイルを開いた方法。
     public nonisolated let mode: OpenMode
-    private let connection: SQLiteConnection
+    let connection: SQLiteConnection
     private let revsLimit: Int
     private var observers: [UUID: AsyncStream<Change>.Continuation] = [:]
     /// 購読者に通知し終えた seq。
     private var notifiedSeq: Int64 = 0
+    /// 直前の `find` で使った索引の名前（テスト用）。
+    private(set) var lastFindIndex: String?
 
     /// `url` の SQLite ファイルを開く。
     ///
@@ -153,10 +155,16 @@ public actor BocchiDB {
     /// Mango クエリ（CouchDB の `_find` 相当）で文書を検索する。
     ///
     /// 削除されていない文書の勝者 Revision が対象で、`_design/` の文書は含まない。
-    /// 索引は使わず、全文書を読んで照合する。
+    /// 使える索引（`createIndex`）があれば候補を絞り、なければ全文書を読んで照合する。結果はどちらでも同じ。
     public func find(_ query: FindQuery) throws -> [Document] {
+        try find(query, useIndexes: true)
+    }
+
+    func find(_ query: FindQuery, useIndexes: Bool) throws -> [Document] {
         let plan = try FindPlan(query)
-        let rows = try connection.query("""
+        let indexed = useIndexes ? try indexedRows(for: plan.selector) : nil
+        lastFindIndex = indexed?.index
+        let rows = try indexed?.rows ?? connection.query("""
             SELECT d.doc_id, d.winning_rev, r.body, d.doc_pk
             FROM documents d JOIN revisions r ON r.doc_pk = d.doc_pk AND r.rev_id = d.winning_rev
             WHERE d.deleted = 0 AND substr(d.doc_id, 1, 8) != '_design/'
@@ -263,7 +271,7 @@ public actor BocchiDB {
         notifiedSeq = changes.lastSeq
     }
 
-    private func currentSeq() throws -> Int64 {
+    func currentSeq() throws -> Int64 {
         try connection.query("SELECT coalesce(max(seq), 0) FROM documents").first?.first?.integer ?? 0
     }
 
@@ -388,7 +396,7 @@ public actor BocchiDB {
 
     // MARK: - 書き込み
 
-    private func ensureWritable() throws {
+    func ensureWritable() throws {
         if mode == .readOnly { throw BocchiDBError.readOnly }
     }
 
@@ -680,6 +688,21 @@ public actor BocchiDB {
           rev    TEXT NOT NULL,
           body   BLOB NOT NULL
         );
+
+        -- Mango クエリの索引。キーの形式は IndexKey を参照。検索時に indexed_seq 以降の変更を反映する。
+        CREATE TABLE IF NOT EXISTS indexes (
+          name        TEXT PRIMARY KEY,
+          fields      TEXT NOT NULL,
+          indexed_seq INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS index_entries (
+          index_name TEXT NOT NULL,
+          key        BLOB NOT NULL,
+          doc_pk     INTEGER NOT NULL,
+          PRIMARY KEY (index_name, key, doc_pk)
+        ) WITHOUT ROWID;
+        CREATE INDEX IF NOT EXISTS index_entries_doc ON index_entries (index_name, doc_pk);
 
         CREATE TABLE IF NOT EXISTS metadata (
           key   TEXT PRIMARY KEY,

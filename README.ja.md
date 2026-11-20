@@ -34,14 +34,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.4` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.5` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.4")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.5")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -147,7 +147,26 @@ let query = try FindQuery(json: Data(#"{"selector": {"tags": {"$in": ["urgent"]}
 - `sort` を指定すると、並べ替えるフィールドがない文書は結果に含まれません（CouchDB と同じ）。
 - CouchDB と違い、`limit` の既定は無制限で、`sort` に索引は要りません。`fields` を指定しても `Document.id` と `rev` は常に入ります。
 - `$regex` は `NSRegularExpression` で評価するため、CouchDB（PCRE）と書き方が異なる場合があります。
-- 索引はまだなく、全文書を読んで照合します。目安として、1 万件で約 0.3 秒（M 系 Mac、release ビルド）です。
+
+索引を作ると、条件に合う文書だけを読むので速くなります。索引がなければ全文書を読んで照合します（1 万件で約 0.2〜0.3 秒）。
+
+```swift
+try await db.createIndex(fields: ["site"])
+try await db.createIndex(fields: ["type", "temperature"])
+try await db.indexes()                 // [IndexInfo(name:fields:)]
+try await db.deleteIndex(name: "...")
+```
+
+- 索引の有無で `find` の結果は変わりません。索引は候補を絞るためだけに使い、最終的な照合はいつも同じ方法で行います。
+- 索引は書き込みのたびには更新せず、次の `find` で変わった文書の分だけ反映します（CouchDB と同じ）。
+- 索引が使われるのは、トップレベルの条件（`$and` でつないだもの）に、索引のすべてのフィールドへの条件があるときです。
+  `$or` だけのセレクタや、`$exists: false` では使われません。
+- 効果が大きいのは、数値・真偽値・null の等価と範囲、文字列の等価、`$beginsWith`、`$in` です。
+  文字列の範囲（`"$gte": "a"` など）は、文字列の照合順序が OS の ICU に依存するため索引で絞り込まず、文字列を持つ文書すべてを候補にします。
+  ASCII・かな・漢字・Latin-1 以外の文字を含む文字列も、同じ理由で常に候補に入ります。
+- 目安（M 系 Mac、release ビルド、5 万件）：条件に合う文書が 1〜3% の検索は約 0.9 秒 → 約 0.02〜0.03 秒。
+  索引の作成は 1 つあたり約 1 秒です。
+- `.readOnly` で開いた DB では索引を作成・削除できません。最新の状態まで反映済みの索引だけを使い、そうでなければ全文書を読みます。
 
 ### 添付ファイル
 
@@ -174,7 +193,7 @@ for loser in try await db.conflicts(id: "inspection-001") {
 ## 制約と注意点
 
 - **同期先は CouchDB 3.x のみです。** CouchDB 互換のほかのサーバー（Cloudant、Couchbase Sync Gateway など）は対象外です。
-- **検索は Mango クエリのみで、索引はまだありません。** map/reduce の View は未実装です。`_design/` の文書は、通常の文書として保存・同期します。
+- **検索は Mango クエリのみです。** map/reduce の View は未実装です。`_design/` の文書は、通常の文書として保存・同期します。
 - **古い Revision の本文は残しません。** 本文と添付を保持するのはリーフの Revision だけで、書き込みのたびに
   Compaction が行われている状態です。古い `rev` を指定して取得すると `nil` になります。
 - **履歴は `revsLimit` 世代まで**（既定 1000、CouchDB と同じ）です。同期の合間に 1 台の端末で同じ文書を `revsLimit` 回を超えて

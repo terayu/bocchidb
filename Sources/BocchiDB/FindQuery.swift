@@ -109,7 +109,7 @@ struct FindPlan {
         let value: JSONValue
     }
 
-    private let selector: Selector
+    let selector: Selector
     private let sortPaths: [[String]]
     private let descending: Bool
     private let skip: Int

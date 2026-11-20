@@ -130,15 +130,22 @@ struct FindInteropTests {
             try await couch.bulkDocs(Self.fixtures.map { id, body in body.merging(["_id": .string(id)]) { $1 } }
                                      + [["_id": "_design/ignored", "v": 1, "type": "num"]])
 
+            // bocchidb 側は索引を作った状態で比べる（索引の有無で結果が変わらないことは IndexTests で確認）。
+            for fields in Self.indexes + [["tags"], ["user.name"], ["n"], ["_id"]] {
+                try await db.createIndex(fields: fields)
+            }
+
             let parsed = try Self.queries.map { ($0, try FindQuery(json: Data($0.utf8))) }
             let ordered = parsed.filter { $0.1.sort.isEmpty } + parsed.filter { !$0.1.sort.isEmpty }
             var indexesCreated = false
+            var indexedQueries = 0
             for (json, query) in ordered {
                 if !query.sort.isEmpty, !indexesCreated {
                     for fields in Self.indexes { try await couch.createIndex(fields: fields) }
                     indexesCreated = true
                 }
                 let local = try await db.find(query)
+                if await db.lastFindIndex != nil { indexedQueries += 1 }
 
                 var couchQuery = try JSONDecoder().decode([String: JSONValue].self, from: Data(json.utf8))
                 if couchQuery["limit"] == nil { couchQuery["limit"] = 10_000 }
@@ -166,6 +173,7 @@ struct FindInteropTests {
                     #expect(localResults.map(\.body) == remoteResults.map(\.body), "\(json)")
                 }
             }
+            #expect(indexedQueries > Self.queries.count / 2, "索引を使ったクエリが少なすぎる（\(indexedQueries) 件）")
         }
     }
 }
