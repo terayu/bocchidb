@@ -150,6 +150,32 @@ public actor BocchiDB {
             .sorted(by: >)
     }
 
+    /// Mango クエリ（CouchDB の `_find` 相当）で文書を検索する。
+    ///
+    /// 削除されていない文書の勝者 Revision が対象で、`_design/` の文書は含まない。
+    /// 索引は使わず、全文書を読んで照合する。
+    public func find(_ query: FindQuery) throws -> [Document] {
+        let plan = try FindPlan(query)
+        let rows = try connection.query("""
+            SELECT d.doc_id, d.winning_rev, r.body, d.doc_pk
+            FROM documents d JOIN revisions r ON r.doc_pk = d.doc_pk AND r.rev_id = d.winning_rev
+            WHERE d.deleted = 0 AND substr(d.doc_id, 1, 8) != '_design/'
+            ORDER BY d.doc_id
+            """)
+        let candidates = try rows.compactMap { row -> FindPlan.Candidate? in
+            guard let id = row[0].text, let rev = row[1].text.flatMap(RevisionID.init),
+                  let data = row[2].blob, let docPK = row[3].integer
+            else { return nil }
+            let body = data.isEmpty ? [:] : try JSONDecoder().decode([String: JSONValue].self, from: data)
+            let candidate = FindPlan.candidate(id: id, rev: rev, body: body, docPK: docPK)
+            return plan.matches(candidate) ? candidate : nil
+        }
+        return try plan.arrange(candidates).map { candidate in
+            Document(id: candidate.id, rev: candidate.rev, deleted: false, body: plan.project(candidate.body),
+                     attachments: plan.includesAttachments ? try loadAttachments(docPK: candidate.docPK, rev: candidate.rev) : [:])
+        }
+    }
+
     // MARK: - 添付ファイル
 
     /// 添付ファイルを追加または置き換え、新しい rev を返す。本文とほかの添付はそのまま引き継ぐ。

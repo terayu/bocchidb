@@ -17,6 +17,7 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 - CouchDB との一回きりの `pull` / `push` / `sync` と、継続的な **Live Sync**
 - 画面表示に使える同期状態（`connecting` / `active` / `idle` / `offline` / `stopped`）
 - 変更の通知（`AsyncStream`）。ローカルでの書き込みも、同期で取り込んだ変更も通知されます
+- Mango クエリ（CouchDB の `_find` と同じ書き方）による検索
 - 添付ファイル（写真、PDF など）。変わっていない添付は stub で送り、送り直しません
 - 指数バックオフによる自動再試行。Live Sync はオフラインの間も止まりません
 - Basic 認証と Cookie（`_session`）認証
@@ -33,14 +34,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.3` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.4` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.3")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.4")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -125,6 +126,29 @@ for await change in await db.observeChanges() {
 }
 ```
 
+### 検索（Mango クエリ）
+
+CouchDB の `_find` と同じセレクタで検索できます。比較と並べ替えの順序も CouchDB と同じです。
+
+```swift
+let docs = try await db.find(FindQuery(
+    selector: ["type": "inspection", "temperature": ["$gte": 25]],
+    sort: [SortField("temperature", .descending)],
+    limit: 10,
+    fields: ["temperature", "site.name"]))
+
+// CouchDB に送る JSON からも作れます
+let query = try FindQuery(json: Data(#"{"selector": {"tags": {"$in": ["urgent"]}}}"#.utf8))
+```
+
+- 対応する演算子：`$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$nin` `$all` `$exists` `$type` `$size` `$mod`
+  `$regex` `$beginsWith` `$elemMatch` `$allMatch` `$and` `$or` `$nor` `$not`
+- 削除されていない文書の勝者 Revision が対象です。`_design/` の文書は含みません。
+- `sort` を指定すると、並べ替えるフィールドがない文書は結果に含まれません（CouchDB と同じ）。
+- CouchDB と違い、`limit` の既定は無制限で、`sort` に索引は要りません。`fields` を指定しても `Document.id` と `rev` は常に入ります。
+- `$regex` は `NSRegularExpression` で評価するため、CouchDB（PCRE）と書き方が異なる場合があります。
+- 索引はまだなく、全文書を読んで照合します。目安として、1 万件で約 0.3 秒（M 系 Mac、release ビルド）です。
+
 ### 添付ファイル
 
 ```swift
@@ -150,7 +174,7 @@ for loser in try await db.conflicts(id: "inspection-001") {
 ## 制約と注意点
 
 - **同期先は CouchDB 3.x のみです。** CouchDB 互換のほかのサーバー（Cloudant、Couchbase Sync Gateway など）は対象外です。
-- **検索エンジンはありません。** Mango クエリや map/reduce の View は未実装です。`_design/` の文書は、通常の文書として保存・同期します。
+- **検索は Mango クエリのみで、索引はまだありません。** map/reduce の View は未実装です。`_design/` の文書は、通常の文書として保存・同期します。
 - **古い Revision の本文は残しません。** 本文と添付を保持するのはリーフの Revision だけで、書き込みのたびに
   Compaction が行われている状態です。古い `rev` を指定して取得すると `nil` になります。
 - **履歴は `revsLimit` 世代まで**（既定 1000、CouchDB と同じ）です。同期の合間に 1 台の端末で同じ文書を `revsLimit` 回を超えて

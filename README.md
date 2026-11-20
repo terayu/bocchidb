@@ -17,6 +17,7 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 - One-shot `pull` / `push` / `sync` and continuous **live sync** with CouchDB
 - Sync status (`connecting` / `active` / `idle` / `offline` / `stopped`) for your UI
 - Change notifications as an `AsyncStream`, for both local writes and replicated changes
+- Mango queries, written the same way as CouchDB's `_find`
 - Attachments (photos, PDFs, …), transferred as stubs when unchanged so they are not re-sent
 - Automatic retry with exponential backoff; live sync keeps going through offline periods
 - Basic and cookie (`_session`) authentication
@@ -33,14 +34,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.3`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.4`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.3")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.4")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -126,6 +127,31 @@ for await change in await db.observeChanges() {
 }
 ```
 
+### Queries (Mango)
+
+Search with the same selectors as CouchDB's `_find`. Comparison and sort order also match CouchDB.
+
+```swift
+let docs = try await db.find(FindQuery(
+    selector: ["type": "inspection", "temperature": ["$gte": 25]],
+    sort: [SortField("temperature", .descending)],
+    limit: 10,
+    fields: ["temperature", "site.name"]))
+
+// Or build it from the JSON you would send to CouchDB
+let query = try FindQuery(json: Data(#"{"selector": {"tags": {"$in": ["urgent"]}}}"#.utf8))
+```
+
+- Supported operators: `$eq` `$ne` `$gt` `$gte` `$lt` `$lte` `$in` `$nin` `$all` `$exists` `$type` `$size` `$mod`
+  `$regex` `$beginsWith` `$elemMatch` `$allMatch` `$and` `$or` `$nor` `$not`
+- Queries cover the winning revision of non-deleted documents. `_design/` documents are excluded.
+- With `sort`, documents missing a sort field are left out of the results, as in CouchDB.
+- Unlike CouchDB, `limit` defaults to unlimited and `sort` needs no index. `Document.id` and `rev` are always set,
+  even when `fields` is given.
+- `$regex` is evaluated with `NSRegularExpression`, so some patterns may differ from CouchDB (PCRE).
+- There are no indexes yet; every document is read and matched. As a guide, 10,000 documents take about 0.3 s
+  (Apple silicon Mac, release build).
+
 ### Attachments
 
 ```swift
@@ -152,7 +178,7 @@ for loser in try await db.conflicts(id: "inspection-001") {
 ## Limitations and notes
 
 - **CouchDB 3.x only.** Other CouchDB-compatible servers (Cloudant, Couchbase Sync Gateway, …) are not targeted.
-- **No query engine.** Mango queries and map/reduce views are not implemented. `_design/` documents
+- **Mango queries only, without indexes yet.** Map/reduce views are not implemented. `_design/` documents
   are stored and replicated as ordinary documents.
 - **Old revision bodies are discarded.** Only leaf revisions keep their body and attachments, as if
   compaction ran on every write. Fetching an old `rev` returns `nil`.

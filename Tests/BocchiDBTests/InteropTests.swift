@@ -366,6 +366,27 @@ struct CouchServer {
         #expect(status == 201)
     }
 
+    func bulkDocs(_ docs: [[String: JSONValue]]) async throws {
+        let (_, status) = try await request("POST", "_bulk_docs", body: try JSONEncoder().encode(["docs": docs]))
+        #expect(status == 201)
+    }
+
+    func createIndex(fields: [String]) async throws {
+        let (_, status) = try await request("POST", "_index", body: try JSONEncoder().encode(
+            ["index": ["fields": JSONValue.array(fields.map(JSONValue.string))]] as JSONValue))
+        #expect(status == 200)
+    }
+
+    /// `_find` の結果の文書。エラーなら CouchDB の応答をそのまま投げる。
+    func find(_ query: Data) async throws -> [[String: JSONValue]] {
+        let (data, status) = try await request("POST", "_find", body: query)
+        guard status == 200 else {
+            throw ReplicationError.http(status: status, body: String(decoding: data, as: UTF8.self))
+        }
+        struct Response: Decodable { let docs: [[String: JSONValue]] }
+        return try JSONDecoder().decode(Response.self, from: data).docs
+    }
+
     @discardableResult
     private func request(_ method: String, _ path: String, body: Data? = nil) async throws -> (Data, Int) {
         let url = URL(string: databaseURL.absoluteString + (path.isEmpty ? "" : "/" + path))!

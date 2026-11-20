@@ -22,4 +22,6 @@ public enum BocchiDBError: Error, Equatable, Sendable {
     case walFileMissing
     /// ファイルを読めない、書き込みモードでファイルに書けない、または `-wal` や `-shm` を作る必要があるのにフォルダに書き込めない。
     case permissionDenied
+    /// Mango クエリが不正、または対応していない演算子を含む。
+    case invalidQuery(String)
 }
