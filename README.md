@@ -34,14 +34,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.6`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.7`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.6")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.7")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -216,7 +216,11 @@ for loser in try await db.conflicts(id: "inspection-001") {
 - **Mango queries only.** Map/reduce views are not implemented. `_design/` documents
   are stored and replicated as ordinary documents.
 - **Old revision bodies are discarded.** Only leaf revisions keep their body and attachments, as if
-  compaction ran on every write. Fetching an old `rev` returns `nil`.
+  compaction ran on every write. Fetching an old `rev` returns `nil`. The freed space is reused by later
+  writes, but the file does not shrink by itself. Call `compact()` to shrink it, for example after
+  deleting many attachments. It rewrites the whole file, blocks other writes while running, and temporarily
+  needs about as much free disk space as the database. Deleted documents leave a small tombstone, as in
+  CouchDB, so that the deletion can be synced.
 - **History is limited to `revsLimit` generations** (default 1000, the same as CouchDB). If one device edits
   the same document more than `revsLimit` times between syncs, a spurious conflict can appear. This is
   the same behavior as CouchDB. No data is lost, and the conflict can be resolved as usual.

@@ -34,14 +34,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.6` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.7` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.6")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.7")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -208,7 +208,10 @@ for loser in try await db.conflicts(id: "inspection-001") {
 - **同期先は CouchDB 3.x のみです。** CouchDB 互換のほかのサーバー（Cloudant、Couchbase Sync Gateway など）は対象外です。
 - **検索は Mango クエリのみです。** map/reduce の View は未実装です。`_design/` の文書は、通常の文書として保存・同期します。
 - **古い Revision の本文は残しません。** 本文と添付を保持するのはリーフの Revision だけで、書き込みのたびに
-  Compaction が行われている状態です。古い `rev` を指定して取得すると `nil` になります。
+  Compaction が行われている状態です。古い `rev` を指定して取得すると `nil` になります。空いた領域は次の書き込みで
+  再利用されますが、ファイル自体は小さくなりません。添付を大量に削除した後などにファイルを縮めたいときは
+  `compact()` を呼んでください。ファイル全体を作り直すため、実行中はほかの書き込みを待たせ、一時的に DB と同じくらいの
+  空き容量が要ります。削除した文書は、同期で削除を伝えるために小さな削除の記録を残します（CouchDB と同じ）。
 - **履歴は `revsLimit` 世代まで**（既定 1000、CouchDB と同じ）です。同期の合間に 1 台の端末で同じ文書を `revsLimit` 回を超えて
   編集すると、偽の競合が出ることがあります。これは CouchDB と同じ動作です。データは失われず、通常の競合と同じ手順で解消できます。
 - **数値**は `Int64` か `Double` で保持し、値として比較します（`26 == 26.0`）。`Int64` を超える整数や、`Double` の精度を超える小数は保持できません。

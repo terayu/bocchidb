@@ -184,6 +184,20 @@ public actor BocchiDB {
         }
     }
 
+    // MARK: - 保守
+
+    /// ファイルを作り直し、削除などで空いた領域を返してファイルを小さくする。
+    ///
+    /// 削除した文書の本文や使われなくなった添付は書き込み時に消えており、その領域は次の書き込みで再利用される。
+    /// この処理は、ファイルの大きさ自体を縮めたいときにだけ使う。
+    /// 実行中はほかの書き込みを待たせ、一時的に DB と同じくらいの空き容量を使う。
+    /// 別の接続が読み取り中だと、`-wal` の内容を本体に移しきれず、ファイルが小さくなるのは次の機会になる。
+    public func compact() throws {
+        try ensureWritable()
+        try connection.execute("VACUUM")
+        try connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    }
+
     // MARK: - 添付ファイル
 
     /// 添付ファイルを追加または置き換え、新しい rev を返す。本文とほかの添付はそのまま引き継ぐ。
