@@ -151,6 +151,68 @@ enum IndexPlanner {
         return KeyInterval.merged(prefixes.map(KeyInterval.all))
     }
 
+    /// `_id` の条件を、文書テーブルの `doc_id` に対する SQL の条件にする。`_id` の条件がなければ `nil`。
+    ///
+    /// `_id` は照合順序ではなく UTF-8 のバイト順で比べる（CouchDB と同じ）。SQLite の TEXT の既定の比較も
+    /// UTF-8 のバイト順なので、範囲や前方一致も正確に絞り込める。
+    static func idCondition(for selector: Selector) -> (sql: String, arguments: [SQLiteValue])? {
+        var clauses: [String] = []
+        var arguments: [SQLiteValue] = []
+        for condition in topLevelConditions(selector) where condition.path == ["_id"] && !condition.negated {
+            guard let (clause, values) = idClause(condition.op) else { continue }
+            clauses.append("(\(clause))")
+            arguments += values
+        }
+        return clauses.isEmpty ? nil : (clauses.joined(separator: " AND "), arguments)
+    }
+
+    private static func idClause(_ op: Selector.Operator) -> (String, [SQLiteValue])? {
+        /// 文字列以外の値との比較は型の順序で決まる（null・真偽値・数値 < 文字列 < 配列・オブジェクト）。
+        func isBelowStrings(_ value: JSONValue) -> Bool {
+            switch value {
+            case .null, .bool, .int, .double: true
+            default: false
+            }
+        }
+        switch op {
+        case .eq(.string(let id)):
+            return ("d.doc_id = ?", [.text(id)])
+        case .eq:
+            return ("0", [])
+        case .gt(.string(let id)): return ("d.doc_id > ?", [.text(id)])
+        case .gte(.string(let id)): return ("d.doc_id >= ?", [.text(id)])
+        case .lt(.string(let id)): return ("d.doc_id < ?", [.text(id)])
+        case .lte(.string(let id)): return ("d.doc_id <= ?", [.text(id)])
+        case .gt(let value), .gte(let value):
+            return isBelowStrings(value) ? nil : ("0", [])
+        case .lt(let value), .lte(let value):
+            return isBelowStrings(value) ? ("0", []) : nil
+        case .in(let values):
+            let ids = values.compactMap { if case .string(let id) = $0 { SQLiteValue.text(id) } else { nil } }
+            return ids.isEmpty ? ("0", []) : ("d.doc_id IN (\(ids.map { _ in "?" }.joined(separator: ", ")))", ids)
+        case .beginsWith(let prefix):
+            guard let upper = successor(of: prefix) else { return ("d.doc_id >= ?", [.text(prefix)]) }
+            return ("d.doc_id >= ? AND d.doc_id < ?", [.text(prefix), .text(upper)])
+        default:
+            return nil
+        }
+    }
+
+    /// `prefix` で始まるすべての文字列より大きい、最小の文字列（UTF-8 のバイト順はコードポイント順と同じ）。
+    static func successor(of prefix: String) -> String? {
+        var scalars = Array(prefix.unicodeScalars)
+        while let last = scalars.popLast() {
+            var next = last.value + 1
+            if next == 0xD800 { next = 0xE000 }  // サロゲートは飛ばす
+            if let scalar = Unicode.Scalar(next) {
+                var view = String.UnicodeScalarView()
+                view.append(contentsOf: scalars + [scalar])
+                return String(view)
+            }
+        }
+        return nil
+    }
+
     private struct Condition {
         let path: [String]
         let op: Selector.Operator

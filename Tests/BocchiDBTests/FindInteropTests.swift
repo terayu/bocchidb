@@ -119,6 +119,27 @@ struct FindInteropTests {
     /// そのため、sort のないクエリは索引を作る前に実行する。
     private static let indexes: [[String]] = [["v"], ["type", "v"]]
 
+    /// CouchDB で作った索引が同期で届き、端末側でも同じ索引が使われる。CouchDB で消すと端末側も消える。
+    @Test func indexesFollowCouchDBDesignDocuments() async throws {
+        try await CouchServer.withDatabase { couch in
+            try await couch.bulkDocs((0..<20).map { ["_id": .string("d\($0)"), "type": "x", "n": .int(Int64($0))] })
+            try await couch.createIndex(fields: ["type", "n"], ddoc: "inspections", name: "by-type-n")
+
+            let db = try BocchiDB(path: ":memory:")
+            try await db.setDesignIndexesEnabled(true)
+            try await couch.replicator(for: db).pull()
+            let query = FindQuery(selector: ["type": "x", "n": ["$gte": 18]])
+            #expect(try await db.find(query).map(\.id) == ["d18", "d19"])
+            #expect(await db.lastFindIndex == "_design/inspections/by-type-n")
+
+            try await couch.deleteIndex(ddoc: "inspections", name: "by-type-n")
+            try await couch.replicator(for: db).pull()
+            #expect(try await db.find(query).map(\.id) == ["d18", "d19"])
+            #expect(await db.lastFindIndex == nil)
+            #expect(try await db.indexes() == [])
+        }
+    }
+
     @Test func findMatchesCouchDB() async throws {
         try await CouchServer.withDatabase { couch in
             let db = try BocchiDB(path: ":memory:")

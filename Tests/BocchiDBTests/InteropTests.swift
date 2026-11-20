@@ -377,6 +377,17 @@ struct CouchServer {
         #expect(status == 200)
     }
 
+    func createIndex(fields: [String], ddoc: String, name: String) async throws {
+        let (_, status) = try await request("POST", "_index", body: try JSONEncoder().encode(
+            ["index": ["fields": .array(fields.map(JSONValue.string))], "ddoc": .string(ddoc), "name": .string(name)] as JSONValue))
+        #expect(status == 200)
+    }
+
+    func deleteIndex(ddoc: String, name: String) async throws {
+        let (_, status) = try await request("DELETE", "_index/\(ddoc)/json/\(name)")
+        #expect(status == 200)
+    }
+
     /// `_find` の結果の文書。エラーなら CouchDB の応答をそのまま投げる。
     func find(_ query: Data) async throws -> [[String: JSONValue]] {
         let (data, status) = try await request("POST", "_find", body: query)

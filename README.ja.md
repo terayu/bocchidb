@@ -34,14 +34,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.5` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.6` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.5")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.6")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -167,6 +167,19 @@ try await db.deleteIndex(name: "...")
 - 目安（M 系 Mac、release ビルド、5 万件）：条件に合う文書が 1〜3% の検索は約 0.9 秒 → 約 0.02〜0.03 秒。
   索引の作成は 1 つあたり約 1 秒です。
 - `.readOnly` で開いた DB では索引を作成・削除できません。最新の状態まで反映済みの索引だけを使い、そうでなければ全文書を読みます。
+- `_id` の条件（等価、範囲、`$beginsWith`、`$in`）は、索引を作らなくても速く検索できます。`_id` はバイト順で比べるため、
+  文字列の範囲検索でも絞り込めます（例：`{"_id": {"$beginsWith": "inspection-2026-11"}}`）。
+
+CouchDB で作った索引（`_index`）を、端末側でも自動で作れます。CouchDB の索引の定義は `_design` 文書として同期されるため、
+有効にすると、CouchDB 側で索引を追加・削除するだけで端末側も追従します。
+
+```swift
+try await db.setDesignIndexesEnabled(true)   // 設定はファイルに保存される。既定は無効
+```
+
+- 自動で作った索引の名前は `_design/<文書名>/<索引名>` です。`createIndex` や `deleteIndex` では変更できません。
+- `partial_filter_selector` を使う索引には対応していないため、作りません。
+- 無効にすると、自動で作った索引はすべて削除されます。
 
 ### 添付ファイル
 

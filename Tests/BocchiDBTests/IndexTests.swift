@@ -199,6 +199,52 @@ import Testing
         #expect(await db.lastFindIndex == "by-n")
     }
 
+    // MARK: - _id
+
+    @Test func idConditionsUseDocumentTable() async throws {
+        let db = try BocchiDB(path: ":memory:")
+        let ids = ["Z", "a", "a\u{10FFFF}", "ab", "abc", "b", "é", "あ", "ア", "inspection-2026-10-31", "inspection-2026-11-01",
+                   "inspection-2026-11-30", "inspection-2026-12-01", "site-1"]
+        for id in ids { try await db.put(id: id, body: ["n": 1]) }
+        try await db.put(id: "_design/x", body: ["n": 1])
+
+        let selectors: [JSONValue] = [
+            ["_id": "ab"],
+            ["_id": ["$beginsWith": "inspection-2026-11"]],
+            ["_id": ["$beginsWith": "a"]],
+            ["_id": ["$beginsWith": ""]],
+            ["_id": ["$gte": "inspection-2026-11-01", "$lt": "inspection-2026-12-01"]],
+            ["_id": ["$gt": "a", "$lte": "b"]],
+            ["_id": ["$lt": "a"]],
+            ["_id": ["$gt": "é"]],
+            ["_id": ["$in": ["a", "あ", 1, "missing"]]],
+            ["_id": ["$lt": 5]],
+            ["_id": ["$gt": [1]]],
+            ["_id": 1],
+            ["_id": ["$gt": "a"], "n": 1],
+        ]
+        // すべての _id に一致する条件では絞り込まない。
+        let unrestricted: [JSONValue] = [["_id": ["$gt": nil]], ["_id": ["$lt": ["x": 1]]]]
+        for selector in selectors + unrestricted {
+            let query = FindQuery(selector: selector)
+            let indexed = try await db.find(query, useIndexes: true).map(\.id)
+            #expect(await db.lastFindIndex == (unrestricted.contains(selector) ? nil : "_all_docs"), "\(selector)")
+            #expect(indexed == (try await db.find(query, useIndexes: false).map(\.id)), "\(selector)")
+        }
+        #expect(try await db.find(FindQuery(selector: ["_id": ["$beginsWith": "inspection-2026-11"]])).map(\.id)
+                == ["inspection-2026-11-01", "inspection-2026-11-30"])
+        // 否定や $or では使わない。
+        _ = try await db.find(FindQuery(selector: ["_id": ["$ne": "a"]]))
+        #expect(await db.lastFindIndex == nil)
+    }
+
+    @Test func stringSuccessor() {
+        #expect(IndexPlanner.successor(of: "ab") == "ac")
+        #expect(IndexPlanner.successor(of: "a\u{10FFFF}") == "b")
+        #expect(IndexPlanner.successor(of: "\u{D7FF}") == "\u{E000}")
+        #expect(IndexPlanner.successor(of: "") == nil)
+    }
+
     // MARK: - 管理 API
 
     @Test func managesIndexes() async throws {
@@ -218,6 +264,72 @@ import Testing
         await #expect(throws: BocchiDBError.invalidQuery("index fields must not be empty")) {
             try await db.createIndex(fields: [])
         }
+    }
+
+    // MARK: - _design 文書の索引
+
+    /// CouchDB の `_index` が作る `_design` 文書と同じ形。
+    private static func designDocument(_ indexes: [String: [JSONValue]], partial: JSONValue = [:]) -> [String: JSONValue] {
+        ["language": "query", "views": .object(indexes.mapValues { fields in
+            ["map": ["fields": [:], "partial_filter_selector": partial], "reduce": "_count",
+             "options": ["def": ["fields": .array(fields)]]]
+        })]
+    }
+
+    @Test func createsIndexesFromDesignDocuments() async throws {
+        let db = try BocchiDB(path: ":memory:")
+        for i in 0..<10 { try await db.put(id: "d\(i)", body: ["type": "x", "date": .int(Int64(i))]) }
+        let rev = try await db.put(id: "_design/inspections", body: Self.designDocument(["by-type-date": ["type", ["date": "desc"]]]))
+
+        // 既定では無効。
+        #expect(try await db.designIndexesEnabled() == false)
+        _ = try await db.find(FindQuery(selector: ["type": "x", "date": ["$gte": 8]]))
+        #expect(await db.lastFindIndex == nil)
+
+        try await db.setDesignIndexesEnabled(true)
+        #expect(try await db.indexes() == [IndexInfo(name: "_design/inspections/by-type-date", fields: ["type", "date"])])
+        #expect(try await db.find(FindQuery(selector: ["type": "x", "date": ["$gte": 8]])).map(\.id) == ["d8", "d9"])
+        #expect(await db.lastFindIndex == "_design/inspections/by-type-date")
+
+        // _design 文書の変更に追従する（索引の追加・フィールドの変更）。
+        let rev2 = try await db.put(id: "_design/inspections", body: Self.designDocument([
+            "by-type-date": ["date"], "by-type": ["type"],
+        ]), rev: rev)
+        _ = try await db.find(FindQuery(selector: ["date": 3]))
+        #expect(try await db.indexes() == [
+            IndexInfo(name: "_design/inspections/by-type", fields: ["type"]),
+            IndexInfo(name: "_design/inspections/by-type-date", fields: ["date"]),
+        ])
+        #expect(await db.lastFindIndex == "_design/inspections/by-type-date")
+
+        // _design 文書を削除すると索引も消える。
+        try await db.remove(id: "_design/inspections", rev: rev2)
+        #expect(try await db.find(FindQuery(selector: ["date": 3])).map(\.id) == ["d3"])
+        #expect(try await db.indexes() == [])
+    }
+
+    @Test func ignoresUnsupportedDesignDocuments() async throws {
+        let db = try BocchiDB(path: ":memory:")
+        try await db.setDesignIndexesEnabled(true)
+        try await db.put(id: "_design/partial", body: Self.designDocument(["p": ["type"]], partial: ["type": "x"]))
+        try await db.put(id: "_design/js", body: ["language": "javascript", "views": ["v": ["map": "function(doc) {}"]]])
+        try await db.put(id: "_design/broken", body: Self.designDocument(["empty": [], "bad": [1]]))
+        try await db.put(id: "_design/ok", body: Self.designDocument(["n": ["n"]]))
+        _ = try await db.find(FindQuery(selector: [:]))
+        #expect(try await db.indexes().map(\.name) == ["_design/ok/n"])
+    }
+
+    @Test func disablingRemovesDesignIndexesOnly() async throws {
+        let db = try BocchiDB(path: ":memory:")
+        try await db.put(id: "_design/a", body: Self.designDocument(["n": ["n"]]))
+        try await db.createIndex(fields: ["m"], name: "mine")
+        try await db.setDesignIndexesEnabled(true)
+        #expect(try await db.indexes().map(\.name) == ["_design/a/n", "mine"])
+        try await db.setDesignIndexesEnabled(false)
+        #expect(try await db.indexes().map(\.name) == ["mine"])
+
+        await #expect(throws: BocchiDBError.self) { try await db.createIndex(fields: ["n"], name: "_design/a/n") }
+        await #expect(throws: BocchiDBError.self) { try await db.deleteIndex(name: "_design/a/n") }
     }
 
     // MARK: - 読み取り専用
@@ -241,6 +353,7 @@ import Testing
                 #expect(await reader.lastFindIndex != nil)
                 await #expect(throws: BocchiDBError.readOnly) { try await reader.createIndex(fields: ["n"]) }
                 await #expect(throws: BocchiDBError.readOnly) { try await reader.deleteIndex(name: "x") }
+                await #expect(throws: BocchiDBError.readOnly) { try await reader.setDesignIndexesEnabled(true) }
             }
             // 索引に反映されていない書き込みがあると、読み取り専用では索引を使わずに全件を読む。
             do {

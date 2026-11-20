@@ -34,14 +34,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.5`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.6`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.5")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.6")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -172,6 +172,20 @@ try await db.deleteIndex(name: "...")
   about 0.9 s to 0.02–0.03 s. Building one index takes about 1 s.
 - Databases opened with `.readOnly` cannot create or delete indexes. They use only indexes that are fully up to date,
   and read every document otherwise.
+- Conditions on `_id` (equality, ranges, `$beginsWith`, `$in`) are fast without any index. Because `_id` is compared
+  by bytes, string ranges are narrowed too (for example `{"_id": {"$beginsWith": "inspection-2026-11"}}`).
+
+Indexes created in CouchDB (`_index`) can be built on the device automatically. CouchDB stores index definitions as
+`_design` documents, which are replicated, so once enabled, adding or removing an index in CouchDB is all it takes.
+
+```swift
+try await db.setDesignIndexesEnabled(true)   // saved in the file; disabled by default
+```
+
+- Indexes built this way are named `_design/<document name>/<index name>` and cannot be changed with
+  `createIndex` or `deleteIndex`.
+- Indexes that use `partial_filter_selector` are not supported and are skipped.
+- Disabling the setting deletes all indexes built this way.
 
 ### Attachments
 
