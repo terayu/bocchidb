@@ -6,7 +6,7 @@ import Testing
 /// 環境変数 `BOCCHIDB_COUCHDB_URL` がないときはスキップする。
 @Suite(.enabled(if: CouchServer.baseURL != nil), .serialized)
 struct FindInteropTests {
-    private static let fixtures: [String: [String: JSONValue]] = [
+    private static let fixtures: [String: JSONObject] = [
         "n-int": ["v": 1, "type": "num", "n": 10],
         "n-dbl": ["v": 2.5, "type": "num", "n": 3],
         "n-neg": ["v": -7, "type": "num", "n": -4],
@@ -41,6 +41,11 @@ struct FindInteropTests {
         "é-id": ["v": 4, "type": "num"],
         "あ-id": ["v": 5, "type": "num"],
         "dotted": ["a.b": 1, "a": ["b": 2]],
+        // CouchDB はオブジェクトをキーの記述順に比べるので、同じ内容でもキーの順序が違えば別の値になる。
+        "o-xy": ["v": ["x": 1, "y": 2], "type": "obj"],
+        "o-yx": ["v": ["y": 2, "x": 1], "type": "obj"],
+        "o-x2": ["v": ["x": 2], "type": "obj"],
+        "o-ba": ["v": ["b": 1, "a": 9], "type": "obj"],
     ]
 
     /// [クエリの JSON]。`limit` がないものは CouchDB の既定（25 件）を避けるため、比較時に大きな値を補う。
@@ -57,6 +62,13 @@ struct FindInteropTests {
         #"{"selector": {"a\\.b": 1}}"#,
         #"{"selector": {"a.b": 2}}"#,
         #"{"selector": {"v": "é"}}"#,
+        // オブジェクトの比較（キーの記述順）
+        #"{"selector": {"v": {"$eq": {"x": 1, "y": 2}}}}"#,
+        #"{"selector": {"v": {"$eq": {"y": 2, "x": 1}}}}"#,
+        #"{"selector": {"v": {"$gt": {"x": 1}}}}"#,
+        #"{"selector": {"v": {"$lt": {"b": 5}}}}"#,
+        #"{"selector": {"v": {"$in": [{"y": 2, "x": 1}]}}}"#,
+        #"{"selector": {"v": {"$ne": {"x": 1, "y": 2}}, "type": "obj"}}"#,
         // 比較（型をまたぐ）
         #"{"selector": {"v": {"$gt": 2}}}"#,
         #"{"selector": {"v": {"$gte": "a", "$lt": "b"}}}"#,
@@ -104,6 +116,7 @@ struct FindInteropTests {
         #"{"selector": {"v": {"$beginsWith": "a"}}}"#,
         // 並べ替え・件数・フィールド
         #"{"selector": {"type": "str"}, "sort": ["v"]}"#,
+        #"{"selector": {"type": "obj"}, "sort": ["v"]}"#,
         #"{"selector": {"v": {"$exists": true}}, "sort": [{"v": "desc"}]}"#,
         #"{"selector": {"_id": {"$gt": null}}, "sort": ["v"]}"#,
         #"{"selector": {"type": {"$gt": null}}, "sort": ["type", "v"]}"#,
@@ -148,7 +161,7 @@ struct FindInteropTests {
             let deletedRev = try await db.put(id: "deleted", body: ["v": 1, "type": "num"])
             try await db.remove(id: "deleted", rev: deletedRev)
 
-            try await couch.bulkDocs(Self.fixtures.map { id, body in body.merging(["_id": .string(id)]) { $1 } }
+            try await couch.bulkDocs(Self.fixtures.map { id, body in var doc = body; doc["_id"] = .string(id); return doc }
                                      + [["_id": "_design/ignored", "v": 1, "type": "num"]])
 
             // bocchidb 側は索引を作った状態で比べる（索引の有無で結果が変わらないことは IndexTests で確認）。
@@ -168,11 +181,11 @@ struct FindInteropTests {
                 let local = try await db.find(query)
                 if await db.lastFindIndex != nil { indexedQueries += 1 }
 
-                var couchQuery = try JSONDecoder().decode([String: JSONValue].self, from: Data(json.utf8))
+                guard case .object(var couchQuery) = try JSONValue(json: Data(json.utf8)) else { continue }
                 if couchQuery["limit"] == nil { couchQuery["limit"] = 10_000 }
-                let remote: [[String: JSONValue]]
+                let remote: [JSONObject]
                 do {
-                    remote = try await couch.find(try JSONEncoder().encode(couchQuery))
+                    remote = try await couch.find(try JSONValue.object(couchQuery).jsonData())
                 } catch {
                     Issue.record("\(json): \(error)")
                     continue
@@ -183,7 +196,7 @@ struct FindInteropTests {
                 var localResults = local.map { (id: $0.id, body: $0.body) }
                 var remoteResults = remote.map { doc in
                     (id: doc["_id"].flatMap { if case .string(let id) = $0 { id } else { nil } } ?? "?",
-                     body: doc.filter { !reserved.contains($0.key) })
+                     body: doc.filter { key, _ in !reserved.contains(key) })
                 }
                 if query.sort.isEmpty {
                     localResults.sort { $0.id < $1.id }

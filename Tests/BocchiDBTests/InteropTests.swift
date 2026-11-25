@@ -28,6 +28,26 @@ struct InteropTests {
         }
     }
 
+    /// push と pull で、本文のキーの記述順が変わらない。
+    @Test func keepsKeyOrderAcrossSync() async throws {
+        try await CouchServer.withDatabase { couch in
+            let a = try BocchiDB(path: ":memory:")
+            let body: JSONObject = ["z": 1, "a": ["y": true, "b": [["k": 1, "c": 2]]], "m": "x"]
+            for i in 0..<20 { try await a.put(id: "d\(i)", body: body) }
+            try await couch.putDocument("remote", ["q": 1, "b": ["2": 2, "1": 1]])
+            _ = try await couch.replicator(for: a).sync()
+
+            let expected = try JSONValue.object(body).jsonData()
+            for i in 0..<20 {
+                let remote = try #require(try await couch.getDocument("d\(i)"))
+                #expect(try JSONValue.object(remote.filter { key, _ in !key.hasPrefix("_") }).jsonData() == expected)
+                #expect(try JSONValue.object(try #require(try await a.get(id: "d\(i)")).body).jsonData() == expected)
+            }
+            let pulled = try #require(try await a.get(id: "remote")).body
+            #expect(try String(decoding: JSONValue.object(pulled).jsonData(), as: UTF8.self) == #"{"q":1,"b":{"2":2,"1":1}}"#)
+        }
+    }
+
     @Test func resumesFromCheckpoint() async throws {
         try await CouchServer.withDatabase { couch in
             let a = try BocchiDB(path: ":memory:")
@@ -350,10 +370,10 @@ struct CouchServer {
         Replicator(local: db, remote: databaseURL, auth: auth, batchSize: batchSize)
     }
 
-    func getDocument(_ id: String, conflicts: Bool = false) async throws -> [String: JSONValue]? {
+    func getDocument(_ id: String, conflicts: Bool = false) async throws -> JSONObject? {
         let (data, status) = try await request("GET", id + (conflicts ? "?conflicts=true" : ""))
-        guard status == 200 else { return nil }
-        return try JSONDecoder().decode([String: JSONValue].self, from: data)
+        guard status == 200, case .object(let doc) = try JSONValue(json: data) else { return nil }
+        return doc
     }
 
     func getAttachment(_ id: String, _ name: String) async throws -> Data? {
@@ -361,13 +381,13 @@ struct CouchServer {
         return status == 200 ? data : nil
     }
 
-    func putDocument(_ id: String, _ body: [String: JSONValue]) async throws {
-        let (_, status) = try await request("PUT", id, body: try JSONEncoder().encode(body))
+    func putDocument(_ id: String, _ body: JSONObject) async throws {
+        let (_, status) = try await request("PUT", id, body: try JSONValue.object(body).jsonData())
         #expect(status == 201)
     }
 
-    func bulkDocs(_ docs: [[String: JSONValue]]) async throws {
-        let (_, status) = try await request("POST", "_bulk_docs", body: try JSONEncoder().encode(["docs": docs]))
+    func bulkDocs(_ docs: [JSONObject]) async throws {
+        let (_, status) = try await request("POST", "_bulk_docs", body: try (["docs": .array(docs.map(JSONValue.object))] as JSONValue).jsonData())
         #expect(status == 201)
     }
 
@@ -389,13 +409,15 @@ struct CouchServer {
     }
 
     /// `_find` の結果の文書。エラーなら CouchDB の応答をそのまま投げる。
-    func find(_ query: Data) async throws -> [[String: JSONValue]] {
+    func find(_ query: Data) async throws -> [JSONObject] {
         let (data, status) = try await request("POST", "_find", body: query)
         guard status == 200 else {
             throw ReplicationError.http(status: status, body: String(decoding: data, as: UTF8.self))
         }
-        struct Response: Decodable { let docs: [[String: JSONValue]] }
-        return try JSONDecoder().decode(Response.self, from: data).docs
+        guard case .object(let response) = try JSONValue(json: data), case .array(let docs)? = response["docs"] else {
+            throw ReplicationError.invalidResponse("_find: missing docs")
+        }
+        return docs.compactMap { if case .object(let doc) = $0 { doc } else { nil } }
     }
 
     @discardableResult
@@ -421,7 +443,7 @@ enum PouchDevice {
         .appending(path: "interop/pouch-device.mjs")
 
     @discardableResult
-    static func run(_ arguments: String...) throws -> [String: JSONValue] {
+    static func run(_ arguments: String...) throws -> JSONObject {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["node", script.path] + arguments
@@ -431,7 +453,7 @@ enum PouchDevice {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
-        return try JSONDecoder().decode([String: JSONValue].self, from: data)
+        return try JSONDecoder().decode(JSONObject.self, from: data)
     }
 }
 

@@ -106,7 +106,7 @@ import Testing
         var random = SeededRandom(seed: seed)
         let db = try BocchiDB(path: ":memory:")
         for i in 0..<120 {
-            var body: [String: JSONValue] = [:]
+            var body: JSONObject = [:]
             if Int.random(in: 0..<5, using: &random) > 0 { body["v"] = Self.randomValue(&random) }
             if Int.random(in: 0..<5, using: &random) > 0 { body["w"] = Self.randomValue(&random) }
             if Int.random(in: 0..<3, using: &random) == 0 { body["o"] = ["x": Self.randomValue(&random)] }
@@ -269,11 +269,11 @@ import Testing
     // MARK: - _design 文書の索引
 
     /// CouchDB の `_index` が作る `_design` 文書と同じ形。
-    private static func designDocument(_ indexes: [String: [JSONValue]], partial: JSONValue = [:]) -> [String: JSONValue] {
-        ["language": "query", "views": .object(indexes.mapValues { fields in
+    private static func designDocument(_ indexes: [String: [JSONValue]], partial: JSONValue = [:]) -> JSONObject {
+        ["language": "query", "views": .object(JSONObject(indexes.mapValues { fields -> JSONValue in
             ["map": ["fields": [:], "partial_filter_selector": partial], "reduce": "_count",
              "options": ["def": ["fields": .array(fields)]]]
-        })]
+        }))]
     }
 
     @Test func createsIndexesFromDesignDocuments() async throws {

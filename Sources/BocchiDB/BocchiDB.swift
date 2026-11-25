@@ -46,7 +46,7 @@ public actor BocchiDB {
     /// 既存の文書を更新するときは、現在のリーフの rev を `rev` に渡す。
     /// 削除済みの文書は `rev` なしで作り直せる。
     @discardableResult
-    public func put(id: String, body: [String: JSONValue], rev: RevisionID? = nil) throws -> RevisionID {
+    public func put(id: String, body: JSONObject, rev: RevisionID? = nil) throws -> RevisionID {
         try ensureWritable()
         let newRev = try connection.transaction {
             try writeDocument(DocumentWrite(id: id, rev: rev, body: body))
@@ -174,7 +174,7 @@ public actor BocchiDB {
             guard let id = row[0].text, let rev = row[1].text.flatMap(RevisionID.init),
                   let data = row[2].blob, let docPK = row[3].integer
             else { return nil }
-            let body = data.isEmpty ? [:] : try JSONDecoder().decode([String: JSONValue].self, from: data)
+            let body = try Self.decodeBody(data)
             let candidate = FindPlan.candidate(id: id, rev: rev, body: body, docPK: docPK)
             return plan.matches(candidate) ? candidate : nil
         }
@@ -298,7 +298,7 @@ public actor BocchiDB {
     ///   - attachments: 添付。stub（`data` が `nil`）は、ローカルの祖先 Revision から名前と revpos で探す。
     @discardableResult
     func merge(
-        id: String, path: [RevisionID], deleted: Bool, body: [String: JSONValue],
+        id: String, path: [RevisionID], deleted: Bool, body: JSONObject,
         attachments incoming: [String: IncomingAttachment] = [:]
     ) throws -> Bool {
         try ensureWritable()
@@ -378,15 +378,15 @@ public actor BocchiDB {
     }
 
     /// `_local` 文書を返す。Revision Tree を持たず、Changes やレプリケーションの対象にならない。
-    func getLocal(id: String) throws -> [String: JSONValue]? {
+    func getLocal(id: String) throws -> JSONObject? {
         guard let data = try connection.query("SELECT body FROM local_docs WHERE doc_id = ?", [.text(id)])
             .first?.first?.blob
         else { return nil }
-        return try JSONDecoder().decode([String: JSONValue].self, from: data)
+        return try Self.decodeBody(data)
     }
 
     /// `_local` 文書を作成または上書きする。rev は CouchDB と同じ "0-N" 形式で増やす。
-    func putLocal(id: String, body: [String: JSONValue]) throws {
+    func putLocal(id: String, body: JSONObject) throws {
         try ensureWritable()
         try connection.run("""
             INSERT INTO local_docs (doc_id, rev, body) VALUES (?, '0-1', ?)
@@ -469,7 +469,7 @@ public actor BocchiDB {
     @discardableResult
     private func apply(
         id: String, docPK: Int64?, tree: inout RevisionTree,
-        path: [RevisionID], deleted: Bool, body: [String: JSONValue],
+        path: [RevisionID], deleted: Bool, body: JSONObject,
         attachments: [String: AttachmentInfo] = [:], blobs: [String: Data] = [:]
     ) throws -> Bool {
         let leavesBefore = Set(tree.leaves.map(\.rev))
@@ -577,7 +577,7 @@ public actor BocchiDB {
 
     // MARK: - ヘルパー
 
-    private static func validate(id: String, body: [String: JSONValue]) throws {
+    private static func validate(id: String, body: JSONObject) throws {
         if id.isEmpty || (id.hasPrefix("_") && !id.hasPrefix("_design/")) {
             throw BocchiDBError.invalidDocumentID(id)
         }
@@ -588,7 +588,7 @@ public actor BocchiDB {
 
     /// 親 rev・削除フラグ・本文・添付から決定的に rev を生成する。
     private static func makeRevision(
-        parent: RevisionID?, deleted: Bool, body: [String: JSONValue], attachments: [String: AttachmentInfo]
+        parent: RevisionID?, deleted: Bool, body: JSONObject, attachments: [String: AttachmentInfo]
     ) throws -> RevisionID {
         var input = Data((parent?.description ?? "").utf8)
         input.append(contentsOf: deleted ? [0, 1] : [0, 0])
@@ -600,17 +600,24 @@ public actor BocchiDB {
         return RevisionID("\((parent?.generation ?? 0) + 1)-\(hash)")!
     }
 
-    private static func encode(_ body: [String: JSONValue]) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return try encoder.encode(body)
+    /// 本文はキーの記述順のまま保存する（CouchDB と同じ順序で比べるため）。
+    private static func encode(_ body: JSONObject) throws -> Data {
+        try JSONValue.object(body).jsonData()
+    }
+
+    static func decodeBody(_ data: Data) throws -> JSONObject {
+        if data.isEmpty { return [:] }
+        guard case .object(let body) = try JSONValue(json: data) else {
+            throw BocchiDBError.invalidJSON("document body is not an object")
+        }
+        return body
     }
 
     private func document(
         id: String, rev: SQLiteValue, deleted: SQLiteValue, body: SQLiteValue, docPK: SQLiteValue
     ) throws -> Document? {
         guard let rev = rev.text.flatMap(RevisionID.init), let data = body.blob, let docPK = docPK.integer else { return nil }
-        let decoded = data.isEmpty ? [:] : try JSONDecoder().decode([String: JSONValue].self, from: data)
+        let decoded = try Self.decodeBody(data)
         return Document(id: id, rev: rev, deleted: deleted.integer == 1, body: decoded,
                         attachments: try loadAttachments(docPK: docPK, rev: rev))
     }

@@ -310,19 +310,21 @@ private struct Checkpoint {
 
     /// リモート → ローカルの順に書く。途中で失敗して両者が食い違った場合、次回は最初からやり直す。
     mutating func save(lastSeq: JSONValue, local: BocchiDB, client: CouchClient) async throws {
-        let body: [String: JSONValue] = ["session_id": .string(sessionID), "last_seq": lastSeq]
+        let body: JSONObject = ["session_id": .string(sessionID), "last_seq": lastSeq]
         do {
-            remoteRev = try await client.putLocal(id, body: body.merging(revField) { $1 })
+            remoteRev = try await client.putLocal(id, body: withRev(body))
         } catch ReplicationError.http(status: 409, _) {
             // 再試行で同じ PUT が二重に届いた場合など。最新の rev を読み直して書き直す。
             remoteRev = if case .string(let rev) = try await client.getLocal(id)?["_rev"] { rev } else { nil }
-            remoteRev = try await client.putLocal(id, body: body.merging(revField) { $1 })
+            remoteRev = try await client.putLocal(id, body: withRev(body))
         }
         try await local.putLocal(id: id, body: body)
     }
 
-    private var revField: [String: JSONValue] {
-        remoteRev.map { ["_rev": .string($0)] } ?? [:]
+    private func withRev(_ body: JSONObject) -> JSONObject {
+        var body = body
+        body["_rev"] = remoteRev.map(JSONValue.string)
+        return body
     }
 }
 
@@ -331,13 +333,13 @@ struct RemoteDocument {
     let id: String
     let path: [RevisionID]
     let deleted: Bool
-    let body: [String: JSONValue]
+    let body: JSONObject
     let attachments: [String: IncomingAttachment]
 
     private static let metaKeys: Set<String> = ["_id", "_rev", "_revisions", "_deleted", "_attachments"]
 
     /// `_bulk_get?revs=true` が返す文書から作る。
-    init(json: [String: JSONValue]) throws {
+    init(json: JSONObject) throws {
         guard case .string(let id) = json["_id"],
               case .string(let revString) = json["_rev"],
               let rev = RevisionID(revString)
@@ -360,7 +362,7 @@ struct RemoteDocument {
         self.path = path
         self.deleted = json["_deleted"] == .bool(true)
         // _conflicts などの未対応フィールドは本文に残し、merge の検証でエラーにする。
-        self.body = json.filter { !Self.metaKeys.contains($0.key) }
+        self.body = json.filter { key, _ in !Self.metaKeys.contains(key) }
 
         var attachments: [String: IncomingAttachment] = [:]
         if case .object(let entries) = json["_attachments"] {
@@ -394,8 +396,8 @@ struct RemoteDocument {
         json["_rev"] = .string(doc.rev.description)
         if doc.deleted { json["_deleted"] = true }
         if !doc.attachments.isEmpty {
-            json["_attachments"] = .object(Dictionary(uniqueKeysWithValues: doc.attachments.map { name, info in
-                var entry: [String: JSONValue] = [
+            json["_attachments"] = .object(JSONObject(Dictionary(uniqueKeysWithValues: doc.attachments.map { name, info in
+                var entry: JSONObject = [
                     "content_type": .string(info.contentType),
                     "revpos": .int(Int64(info.revpos)),
                 ]
@@ -407,7 +409,7 @@ struct RemoteDocument {
                     entry["length"] = .int(Int64(info.length))
                 }
                 return (name, JSONValue.object(entry))
-            }))
+            })))
         }
         json["_revisions"] = [
             "start": .int(Int64(doc.rev.generation)),

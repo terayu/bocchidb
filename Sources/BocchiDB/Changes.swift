@@ -4,9 +4,9 @@ public struct DocumentWrite: Sendable {
     /// 更新・削除する場合は現在のリーフの rev。新規作成なら `nil`。
     public var rev: RevisionID?
     public var deleted: Bool
-    public var body: [String: JSONValue]
+    public var body: JSONObject
 
-    public init(id: String, rev: RevisionID? = nil, deleted: Bool = false, body: [String: JSONValue] = [:]) {
+    public init(id: String, rev: RevisionID? = nil, deleted: Bool = false, body: JSONObject = [:]) {
         self.id = id
         self.rev = rev
         self.deleted = deleted

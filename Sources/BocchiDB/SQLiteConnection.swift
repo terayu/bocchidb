@@ -18,7 +18,10 @@ final class SQLiteConnection {
     private let handle: OpaquePointer
 
     /// `path` に ":memory:" を渡すとインメモリ DB を開く。
-    init(path: String, mode: OpenMode = .create) throws {
+    ///
+    /// - Parameter busyTimeout: 別の接続が書き込み中のとき、ロックが空くのを待つ時間（ミリ秒）。
+    ///   待っても取れなければ `BocchiDBError.busy` になる。
+    init(path: String, mode: OpenMode = .create, busyTimeout: Int32 = 5000) throws {
         var db: OpaquePointer?
         let access = switch mode {
         case .create: SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
@@ -32,6 +35,7 @@ final class SQLiteConnection {
             sqlite3_close(db)
             throw SQLiteError(code: rc, message: message)
         }
+        sqlite3_busy_timeout(db, busyTimeout)
         handle = db
     }
 
@@ -46,6 +50,7 @@ final class SQLiteConnection {
         guard rc == SQLITE_OK else {
             let message = errorMessage.map { String(cString: $0) } ?? "unknown error"
             sqlite3_free(errorMessage)
+            if rc & 0xFF == SQLITE_BUSY { throw BocchiDBError.busy }
             throw SQLiteError(code: rc, message: message)
         }
     }
@@ -131,6 +136,7 @@ final class SQLiteConnection {
 
     private func check(_ rc: Int32) throws {
         guard rc == SQLITE_OK else {
+            if rc & 0xFF == SQLITE_BUSY { throw BocchiDBError.busy }
             throw SQLiteError(code: rc, message: String(cString: sqlite3_errmsg(handle)))
         }
     }

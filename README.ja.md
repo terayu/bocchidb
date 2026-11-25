@@ -34,14 +34,14 @@ BocchiDB・PouchDB・CouchDB を使う端末同士で、同じデータベース
 Swift Package Manager で配布しています。
 
 **Xcode のアプリの場合：** メニューの **File › Add Package Dependencies…** を選び、
-`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.7` から *Up to Next Minor*）を選び、
+`https://github.com/terayu/bocchidb` を入力します。バージョンの規則（例：`0.0.8` から *Up to Next Minor*）を選び、
 `BocchiDB` ライブラリをアプリのターゲットに追加します。
 
 **Swift パッケージの場合：** `Package.swift` に追加します。
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.7")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.8")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -66,6 +66,22 @@ try await db.remove(id: "inspection-001", rev: rev2)
 文書を更新・削除するには、現在の `rev` を渡します。古い `rev` で書き込むと、CouchDB と同じく
 `BocchiDBError.conflict` になります。
 
+### 文書の本文
+
+本文は `JSONObject` です。CouchDB と同じく、キーを書いた順に保持します。保存や同期でもキーの順序は変わりません。
+
+```swift
+var body: JSONObject = ["temperature": 25.5, "ok": true]
+body["memo"] = "checked"                                 // 新しいキーは末尾に加わる
+let value = try JSONValue(json: data)                   // キーの順序を保って JSON を読む
+let json = try JSONValue.object(body).jsonData()        // キーの順序を保って JSON にする
+```
+
+- `==` はキーの順序を区別しませんが、Mango のクエリでは CouchDB と同じくキーの順にオブジェクトを比べます。
+  `{"x": 1, "y": 2}` と `{"y": 2, "x": 1}` は、`$eq`、`$lt`、`$in` などでは別の値です。
+- `Codable`（`JSONDecoder`）で読むと、キーの順序は保たれません。`JSONValue(json:)` を使ってください。
+- 入れ子が `JSONValue.maxDepth`（128）より深いものは `BocchiDBError.invalidJSON` になります。
+
 ### ファイルの開き方
 
 `mode` で開き方を選べます。
@@ -82,6 +98,10 @@ BocchiDB 以外のファイルや対応していないスキーマのバージ�
 
 `.readOnly` は、他のアプリが書き込み中のファイルも安全に読めます。ただし隣に `-wal` ファイルが必要で
 （なければ `BocchiDBError.walFileMissing`）、`-shm` ファイルがなければ作るため、そのときはフォルダへの書き込み権限が要ります。
+
+同じファイルを複数のインスタンス（同じアプリ内でも、別のプロセスでも）で開いて書き込めます。
+別のインスタンスが書き込み中のときは最大 5 秒待ち、それでも書き込めなければ `BocchiDBError.busy` になります。
+`observeChanges()` が知らせるのは、そのインスタンスとその Replicator による変更だけです。他のインスタンスの書き込みは、すぐには通知されません。
 
 ### CouchDB との同期
 

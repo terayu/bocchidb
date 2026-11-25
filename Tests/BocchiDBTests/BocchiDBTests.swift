@@ -59,10 +59,13 @@ import Testing
     }
 
     /// 同じ親・同じ内容なら、別の DB でも同じ rev になる。
+    /// キーの順序が違えば、CouchDB の Mango では別の値として比べられるので、別の rev にする。
     @Test func revisionIDIsDeterministic() async throws {
         let rev1 = try await makeDB().put(id: "a", body: ["x": 1, "y": "z"])
-        let rev2 = try await makeDB().put(id: "a", body: ["y": "z", "x": 1])
+        let rev2 = try await makeDB().put(id: "a", body: ["x": 1, "y": "z"])
+        let rev3 = try await makeDB().put(id: "a", body: ["y": "z", "x": 1])
         #expect(rev1 == rev2)
+        #expect(rev1 != rev3)
     }
 
     @Test func oldRevisionBodyIsDiscarded() async throws {

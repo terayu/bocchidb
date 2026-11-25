@@ -4,7 +4,7 @@ import Testing
 
 @Suite struct FindTests {
     /// 各テストで使う文書。
-    private static let fixtures: [String: [String: JSONValue]] = [
+    private static let fixtures: [String: JSONObject] = [
         "n1": ["v": 1, "type": "num"],
         "n2": ["v": 2.5, "type": "num"],
         "s1": ["v": "a", "type": "str"],
@@ -36,6 +36,23 @@ import Testing
         }
         #expect(Collation.compare(1, 1.0) == .orderedSame)
         #expect(Collation.compare("\u{e9}", "e\u{301}") == .orderedSame)  // Unicode として等価
+    }
+
+    /// CouchDB と同じく、オブジェクトはキーと値の組を記述順に比べる。
+    @Test func collationComparesObjectsInKeyOrder() {
+        #expect(Collation.compare(["x": 1, "y": 2], ["x": 1, "y": 2]) == .orderedSame)
+        #expect(Collation.compare(["x": 1, "y": 2], ["y": 2, "x": 1]) == .orderedAscending)  // "x" < "y"
+        #expect(Collation.compare(["b": 1, "a": 9], ["b": 5]) == .orderedAscending)
+        #expect(Collation.compare(["x": 1], ["x": 1, "a": 0]) == .orderedAscending)  // 短い方が前
+    }
+
+    @Test func findMatchesObjectsInKeyOrder() async throws {
+        let db = try BocchiDB(path: ":memory:")
+        try await db.put(id: "xy", body: ["o": ["x": 1, "y": 2]])
+        try await db.put(id: "yx", body: ["o": ["y": 2, "x": 1]])
+        #expect(try await db.find(FindQuery(selector: ["o": ["$eq": ["x": 1, "y": 2]]])).map(\.id) == ["xy"])
+        #expect(try await db.find(FindQuery(selector: ["o": ["$eq": ["y": 2, "x": 1]]])).map(\.id) == ["yx"])
+        #expect(try await db.get(id: "yx")?.body["o"].map { if case .object(let o) = $0 { o.keys } else { [] } } == ["y", "x"])
     }
 
     @Test func rawComparisonUsesUTF8Bytes() {

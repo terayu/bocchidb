@@ -24,4 +24,8 @@ public enum BocchiDBError: Error, Equatable, Sendable {
     case permissionDenied
     /// Mango クエリが不正、または対応していない演算子を含む。
     case invalidQuery(String)
+    /// JSON として読めない、または JSON にできない値（NaN や無限大）を含む。
+    case invalidJSON(String)
+    /// 別の接続が書き込み中で、待ってもロックを取れなかった。
+    case busy
 }

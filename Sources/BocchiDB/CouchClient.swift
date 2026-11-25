@@ -141,7 +141,7 @@ struct CouchClient: Sendable {
 
     /// `POST /{db}/_revs_diff`：リモートに存在しない rev を返す。
     func revsDiff(_ revsByID: [String: [String]]) async throws -> [String: RevsDiffEntry] {
-        let body = JSONValue.object(revsByID.mapValues { .array($0.map(JSONValue.string)) })
+        let body = JSONValue.object(JSONObject(revsByID.mapValues { .array($0.map(JSONValue.string)) }))
         let data = try await send("POST", "_revs_diff", body: body)
         return try decode([String: RevsDiffEntry].self, from: data)
     }
@@ -154,14 +154,11 @@ struct CouchClient: Sendable {
     }
 
     /// `POST /{db}/_bulk_get?revs=true&attachments=true`：指定した rev を履歴（`_revisions`）と添付付きで取得する。
-    func bulkGet(_ items: [BulkGetItem]) async throws -> [[String: JSONValue]] {
-        struct Response: Decodable {
-            struct Result: Decodable { let id: String; let docs: [Entry] }
-            struct Entry: Decodable { let ok: [String: JSONValue]?; let error: [String: JSONValue]? }
-            let results: [Result]
-        }
+    ///
+    /// 文書本文のキーの順序を保つため、Codable ではなく `JSONValue(json:)` で読む。
+    func bulkGet(_ items: [BulkGetItem]) async throws -> [JSONObject] {
         let body: JSONValue = ["docs": .array(items.map { item in
-            var doc: [String: JSONValue] = ["id": .string(item.id), "rev": .string(item.rev)]
+            var doc: JSONObject = ["id": .string(item.id), "rev": .string(item.rev)]
             if !item.attsSince.isEmpty { doc["atts_since"] = .array(item.attsSince.map(JSONValue.string)) }
             return .object(doc)
         })]
@@ -170,13 +167,27 @@ struct CouchClient: Sendable {
             URLQueryItem(name: "attachments", value: "true"),
         ], body: body)
 
-        var docs: [[String: JSONValue]] = []
-        for result in try decode(Response.self, from: data).results {
-            for entry in result.docs {
-                if let doc = entry.ok {
+        let response: JSONValue
+        do {
+            response = try JSONValue(json: data)
+        } catch {
+            throw ReplicationError.malformedResponse("_bulk_get: \(error)")
+        }
+        guard case .object(let root) = response, case .array(let results)? = root["results"] else {
+            throw ReplicationError.invalidResponse("_bulk_get: missing results")
+        }
+        var docs: [JSONObject] = []
+        for result in results {
+            guard case .object(let result) = result, case .string(let id)? = result["id"],
+                  case .array(let entries)? = result["docs"]
+            else { throw ReplicationError.invalidResponse("_bulk_get: invalid result") }
+            for entry in entries {
+                guard case .object(let entry) = entry else { throw ReplicationError.invalidResponse("_bulk_get: invalid entry") }
+                if case .object(let doc)? = entry["ok"] {
                     docs.append(doc)
                 } else {
-                    throw ReplicationError.documentReadFailed(id: result.id, reason: Self.reason(entry.error))
+                    let error = if case .object(let error)? = entry["error"] { error } else { JSONObject?.none }
+                    throw ReplicationError.documentReadFailed(id: id, reason: Self.reason(error))
                 }
             }
         }
@@ -188,23 +199,23 @@ struct CouchClient: Sendable {
         let body: JSONValue = ["docs": .array(docs), "new_edits": false]
         let data = try await send("POST", "_bulk_docs", body: body)
         // new_edits=false では、失敗した文書だけが応答に含まれる。
-        for entry in try decode([[String: JSONValue]].self, from: data) where entry["error"] != nil {
+        for entry in try decode([JSONObject].self, from: data) where entry["error"] != nil {
             let id = if case .string(let id) = entry["id"] { id } else { "" }
             throw ReplicationError.documentWriteFailed(id: id, reason: Self.reason(entry))
         }
     }
 
     /// `GET /{db}/_local/{id}`。存在しなければ `nil`。
-    func getLocal(_ id: String) async throws -> [String: JSONValue]? {
+    func getLocal(_ id: String) async throws -> JSONObject? {
         do {
-            return try decode([String: JSONValue].self, from: try await send("GET", "_local/\(id)"))
+            return try decode(JSONObject.self, from: try await send("GET", "_local/\(id)"))
         } catch ReplicationError.http(status: 404, _) {
             return nil
         }
     }
 
     /// `PUT /{db}/_local/{id}`。新しい rev を返す。
-    func putLocal(_ id: String, body: [String: JSONValue]) async throws -> String {
+    func putLocal(_ id: String, body: JSONObject) async throws -> String {
         struct Response: Decodable { let rev: String }
         return try decode(Response.self, from: try await send("PUT", "_local/\(id)", body: .object(body))).rev
     }
@@ -230,7 +241,7 @@ struct CouchClient: Sendable {
         }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(body)
+            request.httpBody = try body.jsonData()
         }
 
         var attempt = 1
@@ -296,7 +307,7 @@ struct CouchClient: Sendable {
         }
     }
 
-    private static func reason(_ error: [String: JSONValue]?) -> String {
+    private static func reason(_ error: JSONObject?) -> String {
         guard let error else { return "unknown" }
         return ["error", "reason"].compactMap { key in
             if case .string(let s) = error[key] { s } else { nil }

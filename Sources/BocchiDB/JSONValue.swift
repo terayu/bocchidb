@@ -2,6 +2,7 @@
 ///
 /// 数値は整数（`Int64` の範囲）と小数を区別して保持するが、比較は数値として行う。
 /// JSON では `26` と `26.0` は同じ数なので、`.int(26) == .double(26.0)` は true になる。
+/// オブジェクトはキーの記述順を保つ（`JSONObject`）。順序を保って読み書きするには `init(json:)` と `jsonData()` を使う。
 public enum JSONValue: Sendable {
     case null
     case bool(Bool)
@@ -9,9 +10,10 @@ public enum JSONValue: Sendable {
     case double(Double)
     case string(String)
     case array([JSONValue])
-    case object([String: JSONValue])
+    case object(JSONObject)
 }
 
+/// Codable 経由ではオブジェクトのキーの順序は保たれない（`JSONObject` を参照）。
 extension JSONValue: Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -28,7 +30,7 @@ extension JSONValue: Codable {
             self = .string(value)
         } else if let value = try? container.decode([JSONValue].self) {
             self = .array(value)
-        } else if let value = try? container.decode([String: JSONValue].self) {
+        } else if let value = try? container.decode(JSONObject.self) {
             self = .object(value)
         } else {
             throw DecodingError.dataCorruptedError(
@@ -61,7 +63,7 @@ extension JSONValue: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral,
     public init(stringLiteral value: String) { self = .string(value) }
     public init(arrayLiteral elements: JSONValue...) { self = .array(elements) }
     public init(dictionaryLiteral elements: (String, JSONValue)...) {
-        self = .object(Dictionary(elements, uniquingKeysWith: { _, last in last }))
+        self = .object(JSONObject(elements))
     }
 }
 

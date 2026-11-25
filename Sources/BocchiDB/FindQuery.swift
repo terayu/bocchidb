@@ -34,7 +34,7 @@ public struct FindQuery: Sendable, Equatable {
 
     /// CouchDB の `_find` に送る JSON（`selector`、`sort`、`limit`、`skip`、`fields`）から作る。
     public init(json: Data) throws {
-        guard case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: json) else {
+        guard case .object(let object)? = try? JSONValue(json: json) else {
             throw BocchiDBError.invalidQuery("query must be a JSON object")
         }
         for key in object.keys where !["selector", "sort", "limit", "skip", "fields"].contains(key) {
@@ -103,7 +103,7 @@ struct FindPlan {
     struct Candidate {
         let id: String
         let rev: RevisionID
-        let body: [String: JSONValue]
+        let body: JSONObject
         let docPK: Int64
         /// 照合に使う値（本文に `_id` と `_rev` を加えたもの）。
         let value: JSONValue
@@ -135,7 +135,7 @@ struct FindPlan {
         includesAttachments = query.fields.map { $0.contains("_attachments") } ?? true
     }
 
-    static func candidate(id: String, rev: RevisionID, body: [String: JSONValue], docPK: Int64) -> Candidate {
+    static func candidate(id: String, rev: RevisionID, body: JSONObject, docPK: Int64) -> Candidate {
         var value = body
         value["_id"] = .string(id)
         value["_rev"] = .string(rev.description)
@@ -173,21 +173,21 @@ struct FindPlan {
     }
 
     /// `fields` で指定したフィールドだけを残した本文。
-    func project(_ body: [String: JSONValue]) -> [String: JSONValue] {
+    func project(_ body: JSONObject) -> JSONObject {
         guard let fieldPaths else { return body }
-        var result: [String: JSONValue] = [:]
+        var result: JSONObject = [:]
         for path in fieldPaths { Self.copy(path[...], from: body, into: &result) }
         return result
     }
 
-    private static func copy(_ path: ArraySlice<String>, from source: [String: JSONValue], into target: inout [String: JSONValue]) {
+    private static func copy(_ path: ArraySlice<String>, from source: JSONObject, into target: inout JSONObject) {
         guard let key = path.first, let value = source[key] else { return }
         if path.count == 1 {
             target[key] = value
             return
         }
         guard case .object(let child) = value else { return }
-        var nested: [String: JSONValue] = if case .object(let existing)? = target[key] { existing } else { [:] }
+        var nested: JSONObject = if case .object(let existing)? = target[key] { existing } else { [:] }
         copy(path.dropFirst(), from: child, into: &nested)
         if !nested.isEmpty { target[key] = .object(nested) }
     }
@@ -295,7 +295,7 @@ indirect enum Selector {
         return negated ? .or(parts) : .and(parts)
     }
 
-    private static func parseObject(_ object: [String: JSONValue], path: [String], negated: Bool) throws -> Selector {
+    private static func parseObject(_ object: JSONObject, path: [String], negated: Bool) throws -> Selector {
         let parts = try object.sorted { $0.key < $1.key }.map { key, value in
             try parseEntry(key, value, path: path, negated: negated)
         }

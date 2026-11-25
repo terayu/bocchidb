@@ -34,14 +34,14 @@ Devices running BocchiDB, PouchDB and CouchDB can share the same database.
 BocchiDB is distributed with the Swift Package Manager.
 
 **In an Xcode app:** choose **File › Add Package Dependencies…**, enter
-`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.7`)
+`https://github.com/terayu/bocchidb`, pick a version rule (for example *Up to Next Minor* from `0.0.8`)
 and add the `BocchiDB` library to your app target.
 
 **In a Swift package:** add it to `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.7")),
+    .package(url: "https://github.com/terayu/bocchidb", .upToNextMinor(from: "0.0.8")),
 ],
 targets: [
     .target(name: "MyApp", dependencies: [.product(name: "BocchiDB", package: "bocchidb")]),
@@ -66,6 +66,23 @@ try await db.remove(id: "inspection-001", rev: rev2)
 Updating or deleting a document requires its current `rev`. Writing with an outdated `rev`
 throws `BocchiDBError.conflict`, as in CouchDB.
 
+### Document bodies
+
+A body is a `JSONObject`, which keeps its keys in the order they were written, as CouchDB does.
+Key order is kept when saving and syncing.
+
+```swift
+var body: JSONObject = ["temperature": 25.5, "ok": true]
+body["memo"] = "checked"                                 // new keys are appended
+let value = try JSONValue(json: data)                   // parse JSON, keeping key order
+let json = try JSONValue.object(body).jsonData()        // write JSON, keeping key order
+```
+
+- `==` ignores key order, but Mango queries compare objects in key order, as CouchDB does.
+  `{"x": 1, "y": 2}` and `{"y": 2, "x": 1}` are different values to `$eq`, `$lt`, `$in` and so on.
+- Decoding through `Codable` (`JSONDecoder`) does not keep key order. Use `JSONValue(json:)` instead.
+- Nesting deeper than `JSONValue.maxDepth` (128) levels throws `BocchiDBError.invalidJSON`.
+
 ### Open modes
 
 Choose how to open the file with `mode`.
@@ -83,6 +100,11 @@ access to the file or folder throws `BocchiDBError.permissionDenied`.
 `.readOnly` can safely read a file another app is writing to. It needs the `-wal` file next to the database
 (otherwise it throws `BocchiDBError.walFileMissing`), and creates the `-shm` file if missing, which then
 requires write access to the folder.
+
+Several instances, in the same app or in different processes, can open the same file and write to it.
+A write waits up to 5 seconds while another instance is writing, then throws `BocchiDBError.busy`.
+`observeChanges()` reports changes made through its own instance and its replicators, so writes from
+other instances are not reported right away.
 
 ### Sync with CouchDB
 

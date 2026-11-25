@@ -18,7 +18,9 @@ import Testing
             try await replicator.live(onStatus: statuses.record)
         }
 
-        try await Task.sleep(for: .milliseconds(500))
+        // 負荷が高いとオフラインになるまで時間がかかるので、決まった時間ではなく状態を待つ。
+        while !statuses.values.contains(.offline) { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))
         #expect(await finished.value == false)
 
         live.cancel()

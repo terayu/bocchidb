@@ -22,15 +22,14 @@ enum Collation {
             }
             return order(x.count, y.count)
         case (.object(let x), .object(let y)):
-            // CouchDB はキーの記述順に比べるが、JSONValue は順序を持たないため、キーを並べ替えて比べる。
-            let (keysX, keysY) = (x.keys.sorted(by: stringLess), y.keys.sorted(by: stringLess))
-            for (kx, ky) in zip(keysX, keysY) {
-                let keyResult = compareStrings(kx, ky)
+            // CouchDB と同じく、キーと値の組を記述順に比べる。キーの順序が違えば、等しいオブジェクトにはならない。
+            for (px, py) in zip(x, y) {
+                let keyResult = compareStrings(px.key, py.key)
                 if keyResult != .orderedSame { return keyResult }
-                let valueResult = compare(x[kx]!, y[ky]!)
+                let valueResult = compare(px.value, py.value)
                 if valueResult != .orderedSame { return valueResult }
             }
-            return order(keysX.count, keysY.count)
+            return order(x.count, y.count)
         default:
             return .orderedSame  // null 同士、または同じ値の Bool
         }
@@ -49,10 +48,6 @@ enum Collation {
     private static func compareStrings(_ a: String, _ b: String) -> ComparisonResult {
         a.precomposedStringWithCanonicalMapping.compare(
             b.precomposedStringWithCanonicalMapping, options: .literal, range: nil, locale: root)
-    }
-
-    private static func stringLess(_ a: String, _ b: String) -> Bool {
-        compareStrings(a, b) == .orderedAscending
     }
 
     private static func rank(_ value: JSONValue) -> Int {

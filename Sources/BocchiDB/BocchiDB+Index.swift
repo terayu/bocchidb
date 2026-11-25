@@ -162,7 +162,7 @@ extension BocchiDB {
         var definitions: [String: String] = [:]
         for row in rows {
             guard let id = row[0].text, let data = row[1].blob,
-                  let body = try? JSONDecoder().decode([String: JSONValue].self, from: data),
+                  let body = try? Self.decodeBody(data),
                   body["language"] == "query", case .object(let views)? = body["views"]
             else { continue }
             for (viewName, view) in views {
@@ -244,7 +244,7 @@ extension BocchiDB {
                                        [.text(index.name), .integer(docPK)])
                     guard row[3].integer == 0, !id.hasPrefix("_design/") else { continue }
                     let data = row[4].blob ?? Data()
-                    let body = data.isEmpty ? [:] : try JSONDecoder().decode([String: JSONValue].self, from: data)
+                    let body = try Self.decodeBody(data)
                     let value = FindPlan.candidate(id: id, rev: rev, body: body, docPK: docPK).value
                     var key: IndexKey.Bytes = []
                     for path in paths {
